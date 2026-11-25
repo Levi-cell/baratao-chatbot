@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="JavaScriptLibraryMappings">
+    <excludedPredefinedLibrary name="Chatbot/tmp/fireads_pratico_20261007/pg_validation/node_modules" />
+    <excludedPredefinedLibrary name="Chatbot/tmp/plano_coleta_20261019/candidate/tmp/fireads_pratico_20261007/pg_validation/node_modules" />
+  </component>
+</project>
