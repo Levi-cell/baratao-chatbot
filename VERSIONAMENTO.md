@@ -28,6 +28,10 @@ Commit: `1800e3e68fcf49dd308faf8957e888db4182f0fb`
 
 ### Beta V0.4.0 — Encaminha atendimentos pela rede das notas informadas
 
+Commit: `f8234a2bdccaed2babd8b5f4727610a851ea632b`
+
+### Beta V0.5.0 — Cadastra produtos por código, nome e categoria
+
 Commit: PENDENTE
 
 ## Padrão de numeração

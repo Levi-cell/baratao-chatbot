@@ -172,6 +172,16 @@ class AtendimentoPosVenda(models.Model):
         verbose_name = "atendimento de pós-venda"
 
 
+class ProdutoCatalogo(models.Model):
+    codigo_produto = models.IntegerField(primary_key=True)
+    nome_produto = models.TextField()
+    categoria = models.TextField(choices=[("moveis", "Móveis"), ("estofado", "Estofado")])
+
+    class Meta:
+        managed = False
+        db_table = "catalogo"
+
+
 class FilialCompra(models.Model):
     codigo = models.TextField(primary_key=True)
     nome = models.TextField()

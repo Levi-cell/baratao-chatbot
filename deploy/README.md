@@ -2,6 +2,16 @@
 
 O webhook serve a API, o Admin e o painel. O worker de fluxo processa o atendimento de sete etapas. O worker de consumo atualiza os dados de cobrança da Meta.
 
+## Catálogo de produtos na Beta V0.5.0
+
+Ao atualizar uma base V0.4.0, execute na raiz da revisão V0.5.0, com o ambiente do PostgreSQL carregado:
+
+```bash
+python -m core.database.deploy_database.catalogo_produtos
+```
+
+O comando aplica a [migração SQL](migrations/20261127_catalogo_produtos.sql), carrega o TXT e compara cada registro antes do commit. Pode ser repetido sobre a mesma carga. Se a tabela já contiver dados divergentes, a transação é revertida. A instalação inicial via `setup_database` já inclui os produtos.
+
 ## Instalação inicial
 
 Clone a branch `prod` como o usuario `ubuntu` e instale as dependencias:

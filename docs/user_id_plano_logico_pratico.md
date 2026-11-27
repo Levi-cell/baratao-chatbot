@@ -19,6 +19,12 @@
 ```sql
 -- Estrutura final para instalação limpa. Os dados das sete etapas e das
 -- 21 transições vigentes são inseridos por catalogo.sql na mesma transação.
+CREATE TABLE chatbot.catalogo (
+    codigo_produto integer PRIMARY KEY CHECK (codigo_produto > 0),
+    nome_produto text NOT NULL CHECK (btrim(nome_produto) <> ''),
+    categoria text NOT NULL CHECK (categoria IN ('moveis', 'estofado'))
+);
+
 CREATE TABLE chatbot.central_pos_venda (
     id_central serial PRIMARY KEY,
     nome text NOT NULL CHECK (btrim(nome) <> ''),
@@ -7978,6 +7984,16 @@ class AtendimentoPosVenda(models.Model):
         managed = False
         db_table = "atendimento_pos_venda"
         verbose_name = "atendimento de pós-venda"
+
+
+class ProdutoCatalogo(models.Model):
+    codigo_produto = models.IntegerField(primary_key=True)
+    nome_produto = models.TextField()
+    categoria = models.TextField(choices=[("moveis", "Móveis"), ("estofado", "Estofado")])
+
+    class Meta:
+        managed = False
+        db_table = "catalogo"
 
 
 class FilialCompra(models.Model):

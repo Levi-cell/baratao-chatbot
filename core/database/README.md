@@ -2,6 +2,12 @@
 
 O banco continua sendo `db_chatbot` e os objetos da aplicação continuam no schema `chatbot`. A estrutura de negócio pertence ao SQL versionado. O Django administra suas tabelas de usuários, permissões e sessões. A configuração da conexão permanece em `connection_aws.py`.
 
+## Catálogo de produtos (Beta V0.5.0)
+
+A tabela independente `chatbot.catalogo` contém um produto por código do ERP Objetivo. O [TXT na raiz](../../catalogo_produtos.txt) usa UTF-8, tem cabeçalho e separa `codigo_produto`, `nome_produto` e `categoria` por tabulações. Uma variação com código próprio ocupa uma linha, inclusive quando esgotada.
+
+A carga inicial reúne 7.974 códigos. A categoria `estofado` (2.916) abrange sofás, poltronas, pufes, colchões, camas box e acessórios estofados. A categoria `moveis` (5.058) inclui camas de estrutura rígida, armários, mesas e, por convenção comercial, eletrodomésticos e itens diversos. Produtos de mostruário seguem o tipo da peça. O encaminhamento do Theo continua usando a rede da filial da nota. O catálogo fica disponível para uso futuro pelo painel.
+
 ## Banco e Django Admin na beta V0.2.1
 
 Uma instalação limpa usa `schema.sql` com as declarações `CREATE` finais e `catalogo.sql` com sete etapas e 21 transições. Ao migrar uma base existente, atualize também esses arquivos quando a estrutura ou os dados iniciais mudarem. A retirada das seis saídas por mídia mudou apenas o catálogo. As funções PostgreSQL `dequeue_message()`, `lock_conversa(integer)` e `unlock_conversa(integer, integer)` continuam no DDL. A versão V0.2.1 atualiza o mapeamento Django e as permissões do Admin. O deploy executa `manage.py migrate` para cadastrar essas permissões.

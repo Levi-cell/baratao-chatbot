@@ -1,5 +1,11 @@
 -- Estrutura final para instalação limpa. Os dados das sete etapas e das
 -- 21 transições vigentes são inseridos por catalogo.sql na mesma transação.
+CREATE TABLE chatbot.catalogo (
+    codigo_produto integer PRIMARY KEY CHECK (codigo_produto > 0),
+    nome_produto text NOT NULL CHECK (btrim(nome_produto) <> ''),
+    categoria text NOT NULL CHECK (categoria IN ('moveis', 'estofado'))
+);
+
 CREATE TABLE chatbot.central_pos_venda (
     id_central serial PRIMARY KEY,
     nome text NOT NULL CHECK (btrim(nome) <> ''),

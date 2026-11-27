@@ -3,6 +3,7 @@
 import logging
 from pathlib import Path
 
+from core.database.deploy_database.catalogo_produtos import carregar_catalogo_produtos
 from core.database.deploy_database.transacao_deploy import transacao_deploy
 
 
@@ -28,6 +29,7 @@ def setup_database_aws():
 
         for arquivo in ("schema.sql", "catalogo.sql"):
             cursor.execute((PASTA / arquivo).read_text(encoding="utf-8"))
+        carregar_catalogo_produtos(cursor)
     logger.info("banco_baratao_instalado")
 
 
