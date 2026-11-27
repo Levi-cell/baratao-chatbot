@@ -227,7 +227,7 @@ número maior de tentativas exige uma nova decisão de produto.
 
 Implementação principal:
 
-- `core/database/deploy_database/bank_script.py`, função `chatbot.dequeue_message()`
+- `core/database/deploy_database/schema.sql`, função `chatbot.dequeue_message()`
 - `workers/tratamento_erros_externos/expection_process.py`
 - `core/repositories/atendimento/fila.py`
 
@@ -246,7 +246,7 @@ Implementação principal:
 
 Implementação principal:
 
-- `core/database/deploy_database/bank_script.py`, funções `lock_conversa()` e
+- `core/database/deploy_database/schema.sql`, funções `lock_conversa()` e
   `unlock_conversa()`
 - `core/repositories/atendimento/conversas.py`
 - `core/repositories/atendimento/fila.py`

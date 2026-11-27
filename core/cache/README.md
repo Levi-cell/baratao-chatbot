@@ -79,7 +79,8 @@ trigger `central_mudou`. Cada processo confere a versão no primeiro uso, a cada
   formulário confere o Redis, verifica o vínculo do número com a conta na Meta,
   assina os webhooks e registra o número. Se houver WAAC, compara os telefones
   retornados pela Meta antes do registro. Só aceita o formulário com confirmação
-  das três operações. Editar o nome ou suspender o atendimento dispensa chamadas
+  das três operações. Se mudar apenas o telefone comercial, o formulário confere
+  o vínculo com a Meta e preserva o registro atual. Editar o nome ou suspender o atendimento dispensa chamadas
   à Meta. Após o commit de uma inclusão, edição ou exclusão, relê as centrais
   ativas e publica o mapa. Um rollback descarta essa publicação. Se o Redis
   falhar depois do commit, o Admin avisa da pendência e a versão no PostgreSQL
@@ -105,7 +106,7 @@ ausente ou o Redis falhar, consulta o banco e tenta repor o bloqueio pelo
 tempo restante. Se a confirmação no banco falhar, levanta
 `ValidacaoBloqueioConversaIndisponivel`, convertida em HTTP 503 no webhook.
 
-O par da chave é cliente e unidade. Esse bloqueio de conversa não é o mesmo que
+O bloqueio vale para o par cliente e central. Esse bloqueio de conversa não é o mesmo que
 bloqueio de usuário na Meta.
 
 ## Flood
@@ -116,7 +117,7 @@ bloqueio de usuário na Meta.
 wa_id_cliente + phone_id_unidade
 ```
 
-Clientes diferentes da mesma unidade não compartilham contagem.
+Clientes diferentes da mesma central têm contadores independentes.
 
 O Redis usa janela fixa e deduplica o WAMID por duas horas; a deduplicação e o
 incremento dos contadores são uma única operação Lua atômica. A regra atual
@@ -139,9 +140,7 @@ validação e persistência não usam esse limite.
 
 ## Reset de desenvolvimento
 
-`cache_reset.py` conserva o reset dos caches do chatbot usado pelo setup de
-desenvolvimento: remove as chaves do mapa de unidades e os prefixos
-operacionais e tenta recarregar o mapa. Não executa `FLUSHDB`.
+`cache_reset.py` oferece um reset manual para desenvolvimento. Ele remove as chaves do mapa de centrais e prefixos operacionais e tenta recarregar o mapa. O setup de banco não invoca essa função.
 
 ## Testes relacionados
 

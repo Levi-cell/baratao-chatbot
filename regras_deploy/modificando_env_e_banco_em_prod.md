@@ -10,10 +10,8 @@ substitui a [rotina comum de deploy](rotina_deploy.md).
   ele não substitui o PostgreSQL como registro definitivo.
 - O `.env` de produção nunca entra no Git e nunca deve ser exibido inteiro em
   log, print, screenshot, documentação ou conversa.
-- Toda mudança de schema deve aparecer no DDL Python como **estado final de
-  criação**, sem histórico de correções.
-- O banco RDS já existente recebe um `ALTER` incremental separado, revisado e
-  executado no DBeaver.
+- Toda mudança estrutural entra no [DDL de criação](../core/database/deploy_database/schema.sql) na forma final do objeto. Mudanças nos dados iniciais de etapas, transições ou filiais entram no [catálogo](../core/database/deploy_database/catalogo.sql).
+- Uma base existente recebe o SQL incremental correspondente à sua versão de origem. Uma alteração restrita ao catálogo pode exigir apenas comandos de dados.
 - O `ALTER` aplicado no DBeaver não deve ser copiado para
   `core/database/deploy_database/schema.sql` como migração histórica.
 - Uma intervenção em dados de negócio tem escopo próprio. O arquivamento do projeto e um deploy de código não autorizam limpeza de banco ou cache.
@@ -31,11 +29,9 @@ miss é específico de cada domínio:
   banco previsto para aquele domínio;
 - um ID de cliente stale que causar violação de FK é removido, e o retry seguinte
   volta ao banco;
-- o cache de unidades usa versão persistida em `chatbot.cache_controle` e recarrega
+- o cache de centrais usa versão persistida em `chatbot.cache_controle` e recarrega
   quando detecta divergência;
-- no webhook, a ausência da chave de bloqueio não consulta imediatamente o banco;
-  se necessário, o worker classifica a conversa pelo PostgreSQL e registra a
-  chave com o TTL restante. Uma falha do Redis no webhook usa o fallback de banco;
+- na ausência da chave de bloqueio temporário ou em falha do Redis, o webhook consulta o PostgreSQL na mesma requisição. Se o bloqueio ainda estiver vigente, tenta repor a chave pelo prazo restante. Se o banco também falhar nessa verificação, o webhook devolve HTTP 503;
 - a autocura cobre divergências **detectáveis**. O sistema não compara os dois
   lados em toda leitura para tentar suportar edição manual arbitrária.
 
@@ -83,7 +79,7 @@ Sua inclusão no ambiente prepara a aceitação do domínio pelo Django, mas nã
 publica o painel sozinha. Nginx e certificado HTTPS para esse endereço devem ser
 configurados na VM durante a implantação. O aplicativo já possui login, painel,
 APIs de consulta e CSV. Ele depende das tabelas nativas de autenticação/sessões
-do Django e da migração do vínculo de usuário na unidade. Executar
+do Django e do vínculo entre usuário e central em `chatbot.monitoramento_acesso`. Executar
 `collectstatic` para publicar CSS, JavaScript e logo.
 
 Na VM de producao, `REDIS_HOST` nunca deve ser `localhost`, `127.0.0.1` ou
@@ -253,7 +249,7 @@ O estado final do banco está em [schema.sql](../core/database/deploy_database/s
 
 ### Ordem da mudança
 
-Conferir versão de origem, preparar backup e ensaiar a migração em uma cópia com dados representativos. A [rotina de deploy](rotina_deploy.md) cobre a coordenação dos sete processos e a validação posterior. Os [scripts de migração](../deploy/migrations) documentam pré-condições e verificações de cada versão. A migração da V1.20.0 preserva os encerramentos e recibos anteriores e introduz o terceiro follow-up.
+Conferir a versão de origem, preparar backup e ensaiar a migração em uma cópia com dados representativos. Coordenar o serviço do webhook/painel, o worker de fluxo e o worker de consumo Meta conforme a mudança. Cada script traz suas pré-condições e as consultas de conferência. [Rotina de deploy](rotina_deploy.md) · [Migrações](../deploy/migrations)
 
 ### Modelo de SQL incremental para o DBeaver
 
@@ -291,7 +287,8 @@ Depois do `ALTER`, compare o RDS com o estado final descrito no código:
 - colunas, tipos, nulabilidade e defaults;
 - PKs, FKs, `UNIQUE` e `CHECK` constraints;
 - índices e predicados de índices parciais;
-- seeds de `etapa` e mapa de `etapa_transicao`;
+- catálogo de etapas, transições e filiais de compra;
+- funções SQL de retirada da fila e de aquisição e liberação do lock, além dos gatilhos declarados no DDL;
 - representação dos modelos `managed = False` no Admin;
 - consultas dos repositórios que consomem a estrutura.
 
@@ -312,4 +309,4 @@ sincronia.
 
 ## Manutenção de dados
 
-O antigo reset global usava um inventário anterior à inclusão de chats, filas FireAds, snapshots de entrega e consumo Meta. Uma restauração integral precisa considerar as dependências do schema efetivamente instalado, as mensagens já aceitas por sistemas externos e os bloqueios permanentes. O PostgreSQL e o cache têm ciclos de retenção distintos.
+Em uma restauração, confira a fila e o histórico por WAMID antes de retomar o worker. Uma restauração do PostgreSQL pode retroceder o estado local de uma mensagem que a Meta já aceitou. Confira também os bloqueios de segurança e as chaves temporárias no Redis. [Contratos do fluxo](../core/database/README.md#contratos-do-fluxo)

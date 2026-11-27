@@ -20,7 +20,7 @@ o fluxo e fornecem o cursor; as funções não criam conexões nem fazem commit.
 | `fluxo/contextos/pos_venda.py` | Ler cadastro global e contatos da central para o contexto. |
 | `atendimento/entrada_fila.py` | Registro da entrada do webhook na fila. |
 | `consumo_meta/coletas.py` | Consultas de consumo e aquisição do lock de sessão da coleta. |
-| `seguranca/comparacao_bloqueios.py` | Fotografia de leitura dos bloqueios e unidades para comparação; nomes legados preservados. |
+| `seguranca/comparacao_bloqueios.py` | Fotografia de leitura dos bloqueios e centrais para comparação na Meta, com resolução do cliente por telefone ou BSUID. |
 | `infraestrutura/conexao.py` | Consulta de versão do PostgreSQL no diagnóstico de conexão. |
 
 O [catálogo de etapas](../database/deploy_database/catalogo.sql) define os eventos que os resolvers podem aplicar. A serialização por conversa fica em [locks.py](atendimento/locks.py), a ordenação no webhook em [turno_cliente.py](seguranca/turno_cliente.py) e o histórico usado no replay em [historico.py](atendimento/historico.py). O monitoramento filtra os dados pela central autorizada para o usuário.
@@ -64,7 +64,7 @@ o dono real da transacao registrar e decidir a recuperacao.
 
 ## Idempotencia e concorrencia
 
-- `seguranca/turno_cliente.py` usa advisory lock por cliente e unidade;
+- `seguranca/turno_cliente.py` usa advisory lock por cliente e central;
 - `atendimento/fila.py` preserva a ordem por timestamp Meta e ID;
 - `atendimento/historico.py` reutiliza os vinculos da mensagem original;
 - `fluxo/transicoes.py` carrega somente as arestas permitidas para a origem;

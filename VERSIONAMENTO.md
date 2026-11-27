@@ -20,7 +20,7 @@ Commit: `16779d6699d6f45a141c127cda8f84cef7269e00`
 
 ### Beta V0.2.1 — Alinha painel administrativo ao banco e protege centrais
 
-Commit: PENDENTE
+Commit: `703f386f7647cb5096daf29816ede50059264674`
 
 ## Padrão de numeração
 

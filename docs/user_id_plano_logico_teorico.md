@@ -1,6 +1,6 @@
 # Identidade do cliente no WhatsApp do Baratão
 
-**Implementado no projeto em 26/11/2026.** A fila aceita telefone ou BSUID identificado. A publicação no banco existente requer o [SQL consolidado de remetente, identidade e etapas](../deploy/migrations/20261126_pendencias_baratao_etapas_sequenciais.sql). O [SQL das sete etapas](../deploy/migrations/20261126_baratao_sete_etapas.sql) aplica a numeração atual sobre a base de nove etapas. O plano prático contém o código integral dos arquivos. A habilitação da rota empresarial WAAC real segue o calendário da Meta. [Implementação](user_id_plano_logico_pratico.md) · [Cronograma da plataforma](../CRONOGRAMA_META_2027_2028.md)
+**Estado na Beta V0.2.1.** O webhook e a fila reconhecem entradas com telefone ou BSUID utilizável. A produção já tem as tabelas de identidade e o catálogo de sete etapas. O plano prático reproduz os arquivos dessa versão. A homologação da rota WAAC real depende de a Meta disponibilizar o identificador e as permissões para a central. [Implementação](user_id_plano_logico_pratico.md) · [Histórico do banco](../core/database/README.md#catálogo-de-produção) · [Cronograma da plataforma](../CRONOGRAMA_META_2027_2028.md)
 
 ## Qual identificador usar
 
@@ -49,7 +49,7 @@ Uma mídia de contato só vale como prova se for do mesmo remetente e da mesma c
 
 Separar a escolha da pessoa da escolha do remetente. Para a central, manter `id_central` no banco, o Phone Number ID no cadastro e o valor da conta de mensagens em `waba_id`. No envio, esse valor segue como `messaging_account_id`. O adaptador usa o WAAC ID validado quando cadastrado e o Phone Number ID enquanto estiver ausente. Preparar e testar a rota nova antes do prazo da Meta. Um erro HTTP não deve alternar o remetente nem produzir um segundo envio. A troca de versão exige homologação também para webhook, cadastro de números, bloqueios e métricas, cada qual com seu contrato. A remoção da rota antiga depende de evidência de descontinuação e de todas as centrais já estarem migradas. [Evolução das contas na Meta](https://developers.facebook.com/documentation/business-messaging/whatsapp/account-model-evolution/)
 
-O [plano prático](user_id_plano_logico_pratico.md) detalha os arquivos e os ensaios para a implantação futura.
+O [plano prático](user_id_plano_logico_pratico.md) detalha os arquivos publicados e os ensaios que podem ser repetidos ao homologar uma central com WAAC real.
 
 No cronograma publicado em novembro de 2026, a Meta prevê disponibilizar o WAAC ID na fase do primeiro semestre de 2027. Ele tem relação de um para um com o Phone Number ID, mas recebe outro valor. A previsão para exigir o WAAC ID nas rotas que hoje apontam para telefone é o primeiro semestre de 2028. O ID da WABA existente é reaproveitado como ID da conta de mensagens. Se o token alcançar várias contas de mensagens no mesmo número, informar a conta explicitamente evita atribuir o envio à conta errada. Durante a implantação, obter o WAAC ID real de cada central quando a Meta disponibilizá-lo e homologar antes da troca obrigatória. [Cronograma das contas](https://developers.facebook.com/documentation/business-messaging/whatsapp/account-model-evolution/) · [Seleção da conta para envio](https://developers.facebook.com/documentation/business-messaging/whatsapp/account-model-evolution/messaging/)
 

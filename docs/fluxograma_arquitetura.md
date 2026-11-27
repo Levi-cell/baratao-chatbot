@@ -66,3 +66,5 @@ flowchart TD
 Por exemplo, se o worker confirmou a resposta à mensagem A e caiu antes de marcar a fila como concluída, o webhook pode admitir a mensagem B. Uma terceira mensagem C que chega enquanto B aguarda resposta é descartada. Na recuperação, o worker conclui A pelo histórico e processa B em ordem. [Sequência completa dos turnos](../REGRAS_DE_NEGOCIO.md)
 
 [Ciclo transacional](../workers/worker_flow/response_flow/flow_worker.py) · [Entrada de mensagens](../callback/webhook/services/post_flow.py) · [Cache e autocura](../core/cache/README.md) · [Consumo mensal](../deploy/consumo_mensal_meta.md)
+
+Na Beta V0.2.1, o administrador pode consultar as dependências antes de excluir uma central e suspendê-la para preservar o histórico. O operador usa o portal associado à sua central. As duas interfaces compartilham o serviço web. [Cadastro, consultas e exclusão no Admin](../callback/README.md#admin-e-painel)

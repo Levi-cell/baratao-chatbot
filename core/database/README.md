@@ -12,6 +12,8 @@ Ao excluir uma central, a confirmação mostra os vínculos afetados. A exclusã
 
 ## Catálogo de produção
 
+Na conferência de 27/11/2026, a base publicada tinha **7 etapas, 21 transições e bloqueio de 90 dias no encaminhamento**. As migrações descritas a seguir documentam o caminho das bases anteriores. A produção já chegou ao estado final.
+
 A base que concluiu a migração de nove etapas com WAAC e BSUID recebe o [SQL incremental das sete etapas](../../deploy/migrations/20261126_baratao_sete_etapas.sql). Com a aplicação parada, executar o arquivo completo no DBeaver. A consulta final retorna IDs de 1 a 7, 28 transições, detalhes (6), encaminhamento (7) e 90 dias.
 
 Na sequência, executar o [SQL de recoleta do titular](../../deploy/migrations/20261126_recoleta_titular.sql). A recoleta deixa 27 transições e `pula_cpf=false`. Depois, a [migração da Beta V0.2.0](../../deploy/migrations/20261127_midia_repete_etapa.sql) retira as seis arestas de mídia para a etapa final. O catálogo vigente tem 7 etapas e 21 transições.
@@ -59,8 +61,9 @@ Depois do commit, a recuperação integral do Supera exige restaurar o backup. P
 
 Com `chatbot.auth_user` já criado pelo Django e sem tabelas de negócio, execute na raiz do projeto:
 
-```powershell
-python -m core.database.deploy_database.setup_database
+```bash
+cd /opt/chatbot/app
+sudo -u chatbot bash -c 'set -a; source /etc/chatbot/chatbot.env; set +a; /opt/chatbot/venv/bin/python -m core.database.deploy_database.setup_database'
 ```
 
 O setup aplica o [DDL final](deploy_database/schema.sql) e o [catálogo de etapas e transições](deploy_database/catalogo.sql) em uma única transação de `transacao_deploy.py`. Ele exige um schema existente, recusa o legado ou uma instalação já iniciada e deixa a configuração da role e o Redis sob responsabilidade do ambiente.

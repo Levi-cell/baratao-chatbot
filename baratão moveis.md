@@ -2,7 +2,7 @@
 
 A central atende clientes das lojas Baratão e Atacadão. Um chat reúne um cliente e a central de pós-venda. Cada nova conversa começa pelo nome do titular e coleta novamente o CPF. O titular pode ser diferente de quem escreve. A filial de compra vem do sufixo da nota.
 
-**Beta V0.2.0.** Sete etapas e 21 transições. [Fluxograma do atendimento](docs/fluxograma_atendimento.md) · [Fluxograma da arquitetura](docs/fluxograma_arquitetura.md)
+**Beta V0.2.1.** Sete etapas e 21 transições. [Fluxograma do atendimento](docs/fluxograma_atendimento.md) · [Fluxograma da arquitetura](docs/fluxograma_arquitetura.md)
 
 ## Roteiro do cliente
 
@@ -16,7 +16,7 @@ A cada entrada, localizar o chat do cliente com a central e retomar a conversa a
 | 4 · Assunto | “Certo, sobre qual assunto você quer falar? Selecione apenas uma opção.” | Registrar o assunto na conversa e avançar para a etapa 5. |
 | 5 · Pedidos | “Me informe o número do pedido que aparece na sua nota.” | Extrair os números válidos ou aceitar **Perdi a nota**, por botão ou texto. |
 | 6 · Situação | “Certo, estamos quase lá! 😁<br><br>Para podermos te ajudar da melhor forma possível, descreva com o máximo de detalhes a sua situação e o que você precisa.” | Salvar o relato deste atendimento. |
-| 7 · Encaminhamento | Agradecer pelas informações e apresentar o contato de Móveis, o de Sofás ou os dois, conforme o produto desta conversa. | Aplicar a variante do produto e enviar uma mensagem com um botão ou um carrossel de dois cartões. Registrar os números apresentados depois do aceite da Meta. |
+| 7 · Encaminhamento | Apresentar o contato de Móveis, o de Estofados ou os dois, conforme o produto desta conversa. | Aplicar a variante do produto e enviar uma mensagem com um botão ou um carrossel de dois cartões. Registrar os números apresentados depois do aceite da Meta. |
 
 A lista de assunto usa títulos curtos, com a explicação na descrição da opção.
 
@@ -34,12 +34,12 @@ O cliente também pode digitar. “Previsão de entrega” identifica Entrega. �
 
 **Correção e encaminhamento.** Após a saudação, uma mídia repete a pergunta com o aviso de texto. Uma correção usa o mesmo contador da etapa. Um texto com “humano” ou a quarta resposta consecutiva inválida leva à etapa 7. Resposta válida avança e zera a contagem. O encaminhamento usa o produto confirmado nesta conversa.
 
-**Encaminhamento na etapa 7.** Um único produto recebe seu botão. Com Ambos ou sem produto confirmado, usar um único carrossel com dois cartões, na conclusão normal e na antecipada.
+**Encaminhamento na etapa 7.** Um único produto recebe seu botão. Ao concluir a coleta com um único produto, o Theo diz “Obrigado pelas informações. Use o botão abaixo para falar com o pós-venda.” No encaminhamento antecipado com um único produto, usa a frase do setor indicada abaixo. Com ambos os produtos ou sem produto confirmado, a mensagem inclui um carrossel de dois cartões.
 
 | Produto desta conversa | Mensagem de saída | Contatos registrados |
 | --- | --- | --- |
 | Apenas móveis | “Para falar sobre seus móveis, toque abaixo.” Botão **Pós-venda Móveis**. | Número de Móveis usado no botão. |
-| Apenas estofados | “Para falar sobre seu estofado, toque abaixo.” Botão **Pós-venda Estofados**. | Número de Estofados usado no botão. |
+| Apenas estofados | “Para falar sobre seus estofados, toque abaixo.” Botão **Pós-venda Estofados**. | Número de Estofados usado no botão. |
 | Ambos | O Theo explica que a compra inclui estofados e móveis e apresenta o contato dos dois setores. | Registrar ambos os contatos no mesmo encaminhamento. |
 | Produto ainda não informado | O Theo explica que ainda não conseguiu identificar o produto e oferece o contato de cada setor. | Registrar ambos os contatos e manter o produto em aberto. |
 

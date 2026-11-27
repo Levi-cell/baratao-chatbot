@@ -4,7 +4,7 @@ Sistema de atendimento automatizado de pós-venda pelo WhatsApp, desenvolvido pa
 
 O projeto utiliza um fluxo determinístico, com etapas e transições controladas pelo banco de dados, processamento assíncrono de mensagens e persistência do histórico de atendimento. Também possui uma interface web de monitoramento e um componente independente de acompanhamento do consumo da API da Meta.
 
-**Beta V0.2.0.** O atendimento de sete etapas, o webhook e a coleta de consumo Meta rodam na VM Ubuntu. O portal de monitoramento compartilha o serviço web; parte das métricas herdadas ainda requer adaptação ao varejo.
+**Beta V0.2.1.** O webhook e os dois workers rodam na VM Ubuntu. O atendimento tem sete etapas. O Django Admin permite administrar centrais e consultar fila, histórico e transições. O portal dos operadores exibe o consumo por central e mês. Parte das métricas herdadas ainda requer adaptação ao varejo. [Admin e painel](callback/README.md#admin-e-painel)
 
 ## Objetivos
 
@@ -147,13 +147,13 @@ Configure as variáveis de ambiente necessárias conforme [core/config_env.py](c
 Com o banco e o ambiente configurados, verifique o Django:
 
 ```bash
-python callback/manage.py check
+PYTHONPATH="$PWD" python callback/manage.py check
 ```
 
 Para iniciar o servidor local, quando o ambiente estiver preparado:
 
 ```bash
-python callback/manage.py runserver
+PYTHONPATH="$PWD" python callback/manage.py runserver
 ```
 
 O setup de uma base nova e a atualização de uma base existente seguem procedimentos diferentes. Consulte o [guia do banco de dados](core/database/README.md) antes de executar scripts SQL. Não aplique migrações históricas sobre uma instalação limpa que já utiliza o DDL e o catálogo vigentes.

@@ -40,7 +40,7 @@ O resultado esperado contem `REDIS_REMOTO_OK= True` e o endpoint remoto.
 
 ## Bloqueio temporário de conversa
 
-O Redis guarda a chave temporária pelo prazo da regra da conversa. Se a conversa ainda estiver dentro do período de bloqueio no banco, o sistema pode recriar a chave. Para comparar a lista de pessoas bloqueadas na Meta com os registros da unidade, consulte o [guia de bloqueios](../utilitarios/README.md).
+O Redis guarda a chave temporária pelo prazo da regra da conversa. Se a conversa ainda estiver dentro do período de bloqueio no banco, o sistema pode recriar a chave. Para comparar a lista de pessoas bloqueadas na Meta com os registros da central, consulte o [guia de bloqueios](../utilitarios/README.md).
 
 ## Remover o Redis local da VM
 

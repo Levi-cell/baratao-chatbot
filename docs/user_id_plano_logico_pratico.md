@@ -1,8 +1,8 @@
 # Identidade WhatsApp do cliente e da central no Baratão
 
-**Implementação do Baratão na Beta V0.2.0.** Cada passo traz o conteúdo integral de um arquivo, incluindo imports, funções preexistentes e código novo. Os caminhos partem da raiz do Chatbot. Aplicar os arquivos como um conjunto em homologação. O SQL de instalação e as migrações atendem ambientes diferentes. [Regras do atendimento](user_id_plano_logico_teorico.md)
+**Código da Beta V0.2.1** (commit `703f386f7647cb5096daf29816ede50059264674`). Cada passo traz o conteúdo integral de um arquivo, incluindo imports, funções preexistentes e código novo. Os caminhos partem da raiz do Chatbot. Os arquivos abaixo reproduzem a versão publicada. Para homologar a integração em outra central, usar a mesma revisão do repositório e as credenciais dessa central. O SQL de instalação e as migrações atendem ambientes diferentes. [Regras do atendimento](user_id_plano_logico_teorico.md)
 
-## Antes de publicar
+## Como usar este plano em outro ambiente
 
 - A Graph API usada pelo cliente de saída vem de META_GRAPH_API_VERSION. O ambiente local usa 27.0. Cada campo do webhook tem a versão escolhida separadamente no painel da Meta.
 - Para instalação nova, usar o DDL e o catálogo vigentes. Na base de 25/11 que já contém as filiais, parar webhook e workers e executar o [SQL consolidado](../deploy/migrations/20261126_pendencias_baratao_etapas_sequenciais.sql). Ele inclui os dois complementos de identidade registrados nos passos 2 e 3 e renumera as etapas. Para o fluxo atual, aplicar em seguida o [SQL de sete etapas](../deploy/migrations/20261126_baratao_sete_etapas.sql). Em seguida aplicar a [migração de recoleta do titular](../deploy/migrations/20261126_recoleta_titular.sql). Em toda nova conversa, nome e CPF são confirmados novamente. A solicitação de contato aberta acompanha a renumeração. Partindo do catálogo de 27 transições, aplicar a [migração de repetição por mídia](../deploy/migrations/20261127_midia_repete_etapa.sql). O botão de contato também se repete quando chega mídia.
@@ -17,6 +17,8 @@
 ## 1. `core/database/deploy_database/schema.sql` (alterar)
 
 ```sql
+-- Estrutura final para instalação limpa. Os dados das sete etapas e das
+-- 21 transições vigentes são inseridos por catalogo.sql na mesma transação.
 CREATE TABLE chatbot.central_pos_venda (
     id_central serial PRIMARY KEY,
     nome text NOT NULL CHECK (btrim(nome) <> ''),
@@ -7215,84 +7217,49 @@ class ContratoHTTP(TestCase):
 ## 51. `callback/webhook/admin.py` (alterar)
 
 ```python
+"""Painel operacional do pós-venda. A fila e o histórico são controlados pelo worker."""
 import logging
 
 from django.contrib import admin, messages
-from django.db import DatabaseError, connection, connections, transaction
+from django.db import DatabaseError, IntegrityError, connections, transaction
+from django.db.models.deletion import ProtectedError
 from django.http import HttpResponseRedirect
-from django.urls import NoReverseMatch, reverse
-from django.utils.html import format_html
+from django.urls import reverse
 
-from core.cache.cache_unidade import (
-    CacheUnidadesIndisponivel,
-    recarregar_cache_unidades_ou_erro,
-    validar_cache_unidades_disponivel_ou_erro,
-)
-from core.integrations.whatsapp.tools.ativando_numero import registrar_numero_whatsapp
-from core.integrations.whatsapp.tools.ativando_waba_id import ativar_waba_id
-from core.integrations.whatsapp.tools.desativa_waba_id import desativar_waba_id
-from core.integrations.whatsapp.tools.desativando_numero import desregistrar_numero_whatsapp
-from core.integrations.whatsapp.tools.usuarios import (
-    desbloquear_usuario_meta,
-)
-from core.integrations.whatsapp.tools.validando_phone_waba import (
-    validar_phone_number_id_da_waba,
-)
-from core.logging_config import short_value
-from core.repositories.unidades.cache_control import (
-    incrementar_versao_cache_unidades,
-)
-
+from core.cache.cache_unidade import CacheUnidadesIndisponivel, recarregar_cache_unidades_ou_erro
+from . import models
+from .admin_relacoes import ConsultasRelacionadasMixin
 from .forms import CentralPosVendaForm
-from .models import (
-    AtendimentoCustomizado,
-    CacheControle,
-    CentralPosVenda,
-    Chat,
-    Cliente,
-    ClienteBloqueadoMeta,
-    Conversa,
-    ConsultaFireAds,
-    Dependente,
-    EnderecoUnidade,
-    Etapa,
-    EnvioDash,
-    FilaMensagens,
-    FunilEnvio,
-    HistoricoMensagens,
-    IntegracaoFunilUnidade,
-    IntegracaoFireAds,
-    PesquisaSatisfacao,
-    RespostasDesafios,
-    Unidade,
-    WebhookFloodEvento,
-)
+from .models import CentralPosVenda
 
 logger = logging.getLogger(__name__)
 
 
-class SomenteVisualizacaoAdminMixin:
-    def has_add_permission(self, request):
-        return False
-
-    def has_change_permission(self, request, obj=None):
-        return False
-
-    def has_delete_permission(self, request, obj=None):
-        return False
-
-    def get_readonly_fields(self, request, obj=None):
-        return [field.name for field in self.model._meta.fields]
-
-
 @admin.register(CentralPosVenda)
-class CentralPosVendaAdmin(admin.ModelAdmin):
+class CentralPosVendaAdmin(ConsultasRelacionadasMixin, admin.ModelAdmin):
+    campo_vinculo = "central"
+    consultas = {
+        "acessos": (models.MonitoramentoAcesso, ("usuario_id", "usuario__username"), ("usuario_id",)),
+        "bloqueios": (models.ClienteBloqueadoMeta, ("wa_id_cliente", "bloqueado_em"), ("wa_id_cliente",)),
+        "consumo": (models.ConsumoMensalMeta, ("mes_referencia", "qtd_janela_gratuita", "qtd_franquia_consumida",
+                    "qtd_cobradas_meta", "valor_meta", "moeda", "status_apuracao"), ("-mes_referencia",)),
+        "coletas": (models.ConsumoMetaColeta, ("periodo", "proxima_consulta_em", "ultima_tentativa_em",
+                    "falhas_consecutivas", "ultimo_erro"), ("periodo",)),
+        "identidades": (models.IdentidadeBsuid, ("cliente_id", "user_id", "vigente", "suspender_telefone"),
+                        ("cliente_id", "user_id")),
+    }
+    fieldsets = (
+        ("Atendimento", {"fields": ("nome", "ativa", "nome_agente", "genero_agente")}),
+        ("Remetente no WhatsApp", {"fields": ("telefone", "waba_id", "phone_number_id", "waac_id")}),
+        ("Encaminhamento aos setores", {"fields": ("telefone_moveis", "telefone_sofas")}),
+        ("Monitoramento", {"fields": ("consultas_do_registro", "id_fuso", "nome_fuso", "fuso_verificado_em")}),
+    )
     form = CentralPosVendaForm
     list_display = ("nome", "ativa", "telefone", "phone_number_id", "waba_id", "waac_id")
     search_fields = ("nome", "telefone", "phone_number_id", "waba_id", "waac_id")
     list_filter = ("ativa",)
     ordering = ("nome", "id_central")
-    readonly_fields = ("id_fuso", "nome_fuso", "fuso_verificado_em")
+    readonly_fields = ("consultas_do_registro", "id_fuso", "nome_fuso", "fuso_verificado_em")
 
     def save_model(self, request, obj, form, change):
         if change:
@@ -7329,1815 +7296,150 @@ class CentralPosVendaAdmin(admin.ModelAdmin):
 
         transaction.on_commit(publicar, using=using)
 
-
-@admin.register(EnderecoUnidade)
-class EnderecoUnidadeAdmin(admin.ModelAdmin):
-    list_display = ('id_unidade', 'endereco')
-    search_fields = ('id_unidade__nome_unidade', 'endereco')
-    list_select_related = ('id_unidade',)
-
-
-@admin.register(IntegracaoFunilUnidade)
-class IntegracaoFunilUnidadeAdmin(admin.ModelAdmin):
-    list_display = (
-        "id_integracao_funil",
-        "id_unidade",
-        "nome_widget",
-        "codigo_widget",
-        "codigo_canal_venda",
-        "widget_ativo",
-        "integracao_ativa",
-        "data_salvamento_widget",
-        "atualizado_em",
-    )
-
-    search_fields = (
-        "id_unidade__nome_unidade",
-        "nome_widget",
-        "codigo_widget",
-        "codigo_canal_venda",
-        "link_api_carrossel",
-    )
-
-    list_filter = (
-        "widget_ativo",
-        "integracao_ativa",
-        "data_salvamento_widget",
-    )
-
-    readonly_fields = (
-        "criado_em",
-        "atualizado_em",
-    )
-
-    ordering = ("id_unidade",)
-    list_select_related = ("id_unidade",)
-    list_per_page = 50
-    empty_value_display = "-"
-
-
-@admin.register(FunilEnvio)
-class FunilEnvioAdmin(SomenteVisualizacaoAdminMixin, admin.ModelAdmin):
-    list_display = (
-        "id_funil_envio",
-        "id_conversa",
-        "status",
-        "attempt_count",
-        "next_attempt_at",
-        "processing_started_at",
-        "enviado_em",
-        "atualizado_em",
-    )
-    search_fields = (
-        "id_conversa__id_conversa",
-        "id_conversa__id_cliente__nome",
-        "id_conversa__id_cliente__waid_telefone",
-    )
-    list_filter = ("status",)
-    ordering = ("-atualizado_em",)
-    date_hierarchy = "criado_em"
-    list_select_related = (
-        "id_conversa",
-        "id_conversa__id_cliente",
-    )
-    list_per_page = 50
-    empty_value_display = "-"
-
-
-class AtendimentoCustomizadoInline(admin.StackedInline):
-    model = AtendimentoCustomizado
-    extra = 1
-    min_num = 1
-    max_num = 1
-    can_delete = False
-    validate_min = True
-
-    def get_formset(self, request, obj=None, **kwargs):
-        kwargs.update(validate_min=True, validate_max=True)
-        return super().get_formset(request, obj, **kwargs)
-
-
-@admin.register(Unidade)
-class UnidadeAdmin(admin.ModelAdmin):
-    inlines = (AtendimentoCustomizadoInline,)
-
-    list_display = (
-        "id_unidade",
-        "nome_unidade",
-        "id_usuario_monitoramento",
-        "cnpj",
-        "telefone",
-        "email_responsavel",
-        "waba_id",
-        "phone_number_id",
-        "status_pagamento",
-    )
-
-    search_fields = (
-        "nome_unidade",
-        "id_usuario_monitoramento__username",
-        "cnpj",
-        "telefone",
-        "email_responsavel",
-        "waba_id",
-        "phone_number_id",
-    )
-
-    list_filter = (
-        "status_pagamento",
-    )
-    ordering = ("nome_unidade",)
-    list_select_related = ("id_usuario_monitoramento", "atendimento_customizado")
-
-    list_per_page = 50
-    empty_value_display = "-"
-
-    def get_inlines(self, request, obj=None):
-        # Uma unidade nova precisa da personalização na mesma transação.
-        # Depois do cadastro, a edição fica na tela própria da personalização.
-        return self.inlines if obj is None else ()
-
-    def get_readonly_fields(self, request, obj=None):
-        if obj is not None:
-            return ("waba_id", "phone_number_id", "abrir_atendimento_customizado")
-
-        return ()
-
-    @admin.display(description="Atendimento customizado")
-    def abrir_atendimento_customizado(self, obj):
-        url = reverse(
-            "admin:webhook_atendimentocustomizado_change",
-            args=[obj.atendimento_customizado.pk],
-        )
-        return format_html('<a href="{}">Editar personalização da unidade</a>', url)
-
-    def _create_formsets(self, request, obj, change):
-        formsets, inlines = super()._create_formsets(request, obj, change)
-        # O Django cria os inlines antes de validar o formulário principal.
-        # A chamada à Meta só pode acontecer com a personalização válida também.
-        request._unidade_formsets = formsets
-        return formsets, inlines
-
-    def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
+    def delete_view(self, request, object_id, extra_context=None):
         try:
-            return super().changeform_view(
-                request,
-                object_id=object_id,
-                form_url=form_url,
-                extra_context=extra_context,
-            )
+            return super().delete_view(request, object_id, extra_context)
+        except IntegrityError as exc:
+            # Um worker pode criar um vínculo após a tela de confirmação.
+            if not isinstance(exc, ProtectedError) and getattr(exc.__cause__, "sqlstate", None) != "23503":
+                raise
+            self.message_user(request, "A central passou a ter registros vinculados. Para suspender o atendimento, desative a central.", messages.ERROR)
+            return HttpResponseRedirect(reverse("admin:webhook_centralposvenda_changelist"))
 
-        except CacheUnidadesIndisponivel as exc:
-            if self._falha_cache_originada_no_banco(exc):
-                return self._responder_falha_banco(
-                    request,
-                    object_id,
-                    exc,
-                )
-
-            logger.exception(
-                "admin_unidade_cache_falhou | acao=rollback_admin object_id=%s meta_ok=%s erro=%s",
-                object_id,
-                self._meta_sucesso_nesta_requisicao(request),
-                exc,
-            )
-            self.message_user(
-                request,
-                self._mensagem_falha_redis(request),
-                level=messages.ERROR,
-            )
+    def changelist_view(self, request, extra_context=None):
+        try:
+            return super().changelist_view(request, extra_context)
+        except IntegrityError as exc:
+            vinculado = isinstance(exc, ProtectedError) or getattr(exc.__cause__, "sqlstate", None) == "23503"
+            if request.POST.get("action") != "delete_selected" or not vinculado:
+                raise
+            self.message_user(request, "Uma das centrais passou a ter registros vinculados. Reabra a lista para conferir.", messages.ERROR)
             return HttpResponseRedirect(request.path)
 
-        except DatabaseError as exc:
-            return self._responder_falha_banco(
-                request,
-                object_id,
-                exc,
-            )
 
-    def get_form(self, request, obj=None, change=False, **kwargs):
-        base_form = super().get_form(request, obj, change=change, **kwargs)
-        model_admin = self
+class SomenteConsulta(admin.ModelAdmin):
+    list_per_page = 50
 
-        class UnidadeAdminForm(base_form):
-            def _post_clean(self):
-                super()._post_clean()
-
-                if change or self.errors:
-                    if change and not self.errors:
-                        model_admin._validar_cache_unidades_form(
-                            self,
-                            request,
-                            meta_validada=False,
-                        )
-                    return
-
-                if any(
-                    not formset.is_valid()
-                    for formset in getattr(request, "_unidade_formsets", ())
-                ):
-                    self.add_error(None, "Confira os dados do atendimento customizado.")
-                    return
-
-                waba_id = self.cleaned_data.get("waba_id")
-                phone_number_id = self.cleaned_data.get("phone_number_id")
-
-                if not waba_id:
-                    self.add_error(
-                        "waba_id",
-                        "Informe a WABA que sera assinada pelo App.",
-                    )
-                    return
-
-                campo_com_erro = model_admin._preparar_meta_antes_de_salvar(
-                    request,
-                    waba_id,
-                    phone_number_id,
-                )
-
-                if campo_com_erro == "vinculo_waba_phone":
-                    self.add_error(
-                        "phone_number_id",
-                        "Este phone ID nao pertence a WABA informada. "
-                        "A unidade nao foi salva.",
-                    )
-                    return
-
-                if campo_com_erro == "waba_id":
-                    self.add_error(
-                        "waba_id",
-                        "A Meta falhou ao assinar esta WABA. Unidade nao foi salva.",
-                    )
-                    return
-
-                if campo_com_erro == "phone_number_id":
-                    self.add_error(
-                        "phone_number_id",
-                        "A Meta falhou ao registrar este numero. Unidade nao foi salva.",
-                    )
-                    return
-
-                model_admin._validar_cache_unidades_form(
-                    self,
-                    request,
-                    meta_validada=True,
-                )
-
-        return UnidadeAdminForm
-
-    def save_model(self, request, obj, form, change):
-        super().save_model(request, obj, form, change)
-        self._registrar_alteracao_cache_unidades()
-
-    def delete_model(self, request, obj):
-        if not self._meta_desregistrada_nesta_requisicao(request, obj):
-            if not self._desregistrar_meta_antes_de_excluir(request, obj):
-                return
-
-        if not self._cache_validado_nesta_requisicao(request, obj):
-            if not self._validar_cache_unidades_antes_de_alterar(
-                request,
-                "excluir",
-                meta_validada=True,
-            ):
-                return
-
-        super().delete_model(request, obj)
-        self._registrar_alteracao_cache_unidades()
-
-    def get_actions(self, request):
-        actions = super().get_actions(request)
-        actions.pop("delete_selected", None)
-        return actions
-
-    def delete_queryset(self, request, queryset):
-        logger.warning(
-            "admin_unidade_exclusao_massa_bloqueada | acao=manter_registros usuario=%s total=%s",
-            request.user,
-            queryset.count(),
-        )
-        self.message_user(
-            request,
-            "Exclusao em massa de unidade nao permitida. Exclua uma unidade por vez.",
-            level=messages.ERROR,
-        )
-
-    def delete_view(self, request, object_id, extra_context=None):
-        try:
-            if request.method == "POST":
-                obj = self.get_object(request, object_id)
-
-                if obj and not self._desregistrar_meta_antes_de_excluir(request, obj):
-                    return HttpResponseRedirect(
-                        reverse(
-                            "admin:webhook_unidade_change",
-                            args=[object_id],
-                        )
-                    )
-
-                if obj and not self._validar_cache_unidades_antes_de_alterar(
-                    request,
-                    "excluir",
-                    meta_validada=True,
-                ):
-                    return HttpResponseRedirect(
-                        reverse(
-                            "admin:webhook_unidade_change",
-                            args=[object_id],
-                        )
-                    )
-
-                if obj:
-                    self._marcar_meta_desregistrada_na_requisicao(request, obj)
-                    self._marcar_cache_validado_na_requisicao(request, obj)
-
-            return super().delete_view(request, object_id, extra_context)
-
-        except CacheUnidadesIndisponivel as exc:
-            if self._falha_cache_originada_no_banco(exc):
-                return self._responder_falha_banco_delete(
-                    request,
-                    object_id,
-                    exc,
-                )
-
-            logger.exception(
-                "admin_unidade_cache_delete_falhou | acao=rollback_admin object_id=%s meta_ok=%s erro=%s",
-                object_id,
-                self._meta_sucesso_nesta_requisicao(request),
-                exc,
-            )
-            self.message_user(
-                request,
-                self._mensagem_falha_redis(request),
-                level=messages.ERROR,
-            )
-            return HttpResponseRedirect(
-                reverse(
-                    "admin:webhook_unidade_change",
-                    args=[object_id],
-                )
-            )
-
-        except DatabaseError as exc:
-            return self._responder_falha_banco_delete(
-                request,
-                object_id,
-                exc,
-            )
-
-    def _registrar_alteracao_cache_unidades(self):
-        with connection.cursor() as cursor:
-            versao = incrementar_versao_cache_unidades(cursor)
-            total_unidades = recarregar_cache_unidades_ou_erro(cursor)
-
-        logger.info(
-            "cache_unidades_versao_incrementada | acao=incrementar_versao_e_recarregar versao=%s unidades=%s",
-            versao,
-            total_unidades,
-        )
-
-    def link_agendamento_clickable(self, obj):
-        if obj.link_agendamento:
-            return format_html(
-                '<a href="{}" target="_blank">Abrir</a>',
-                obj.link_agendamento,
-            )
-        return "-"
-
-    link_agendamento_clickable.short_description = "Agendamento"
-
-    def link_instagram_clickable(self, obj):
-        if obj.link_instagram:
-            return format_html(
-                '<a href="{}" target="_blank">Abrir</a>',
-                obj.link_instagram,
-            )
-        return "-"
-
-    link_instagram_clickable.short_description = "Instagram"
-
-    def _preparar_meta_antes_de_salvar(
-        self,
-        request,
-        waba_id,
-        phone_number_id,
-    ):
-        if not self._validar_vinculo_phone_waba_antes_de_salvar(
-            request,
-            waba_id,
-            phone_number_id,
-        ):
-            return "vinculo_waba_phone"
-
-        if not self._ativar_waba_antes_de_salvar(request, waba_id):
-            return "waba_id"
-
-        if not self._registrar_meta_antes_de_salvar(
-            request,
-            phone_number_id,
-        ):
-            return "phone_number_id"
-
-        return None
-
-    def _validar_vinculo_phone_waba_antes_de_salvar(
-        self,
-        request,
-        waba_id,
-        phone_number_id,
-    ):
-        try:
-            status, resposta = validar_phone_number_id_da_waba(
-                waba_id,
-                phone_number_id,
-            )
-
-            if not self._meta_resposta_sucesso(status, resposta):
-                logger.error(
-                    "whatsapp_phone_waba_vinculo_invalido | "
-                    "acao=bloquear_save waba_id=%s phone_number_id=%s "
-                    "status=%s motivo=%s",
-                    short_value(waba_id),
-                    short_value(phone_number_id),
-                    status,
-                    resposta.get("reason")
-                    if isinstance(resposta, dict)
-                    else None,
-                )
-                self.message_user(
-                    request,
-                    "A Meta nao confirmou que o phone ID pertence a "
-                    "WABA informada. A unidade nao foi salva.",
-                    level=messages.ERROR,
-                )
-                return False
-
-            logger.info(
-                "whatsapp_phone_waba_vinculo_ok | "
-                "acao=permitir_ativacao waba_id=%s phone_number_id=%s",
-                short_value(waba_id),
-                short_value(phone_number_id),
-            )
-            return True
-
-        except Exception as exc:
-            logger.exception(
-                "whatsapp_phone_waba_validacao_erro | "
-                "acao=bloquear_save waba_id=%s phone_number_id=%s "
-                "erro=%s",
-                short_value(waba_id),
-                short_value(phone_number_id),
-                exc,
-            )
-            self.message_user(
-                request,
-                "Erro ao validar WABA e phone ID na Meta. "
-                f"A unidade nao foi salva: {exc}",
-                level=messages.ERROR,
-            )
-            return False
-
-    def _ativar_waba_antes_de_salvar(self, request, waba_id):
-        try:
-            status, resposta = ativar_waba_id(waba_id)
-
-            if not self._meta_resposta_sucesso(status, resposta):
-                logger.error(
-                    "whatsapp_waba_ativar_falhou | acao=bloquear_save "
-                    "waba_id=%s status=%s resposta=%s",
-                    short_value(waba_id),
-                    status,
-                    resposta,
-                )
-                self.message_user(
-                    request,
-                    "Erro ao assinar WABA no WhatsApp. "
-                    f"Unidade nao foi salva: {resposta}",
-                    level=messages.ERROR,
-                )
-                return False
-
-            self._marcar_meta_sucesso(
-                request,
-                acao="ativar_waba",
-                waba_id=waba_id,
-            )
-            logger.info(
-                "whatsapp_waba_ativada | acao=permitir_registro_numero "
-                "waba_id=%s status=%s",
-                short_value(waba_id),
-                status,
-            )
-            return True
-
-        except Exception as exc:
-            logger.exception(
-                "whatsapp_waba_ativar_erro | acao=bloquear_save "
-                "waba_id=%s erro=%s",
-                short_value(waba_id),
-                exc,
-            )
-            self.message_user(
-                request,
-                "Erro inesperado ao assinar WABA. "
-                f"Unidade nao foi salva: {exc}",
-                level=messages.ERROR,
-            )
-            return False
-
-    def _registrar_meta_antes_de_salvar(self, request, phone_number_id):
-        try:
-            status, resposta = registrar_numero_whatsapp(phone_number_id)
-
-            if not self._meta_resposta_sucesso(status, resposta):
-                logger.error(
-                    "whatsapp_numero_registrar_falhou | acao=bloquear_save phone_number_id=%s status=%s resposta=%s",
-                    short_value(phone_number_id),
-                    status,
-                    resposta,
-                )
-                self.message_user(
-                    request,
-                    f"Erro ao registrar numero no WhatsApp. Unidade nao foi salva: {resposta}",
-                    level=messages.ERROR,
-                )
-                return False
-
-            self._marcar_meta_sucesso(
-                request,
-                acao="registrar_numero",
-                phone_number_id=phone_number_id,
-            )
-            logger.info(
-                "whatsapp_numero_registrado | acao=permitir_save phone_number_id=%s status=%s",
-                short_value(phone_number_id),
-                status,
-            )
-            return True
-
-        except Exception as exc:
-            logger.exception(
-                "whatsapp_numero_registrar_erro | acao=bloquear_save phone_number_id=%s erro=%s",
-                short_value(phone_number_id),
-                exc,
-            )
-            self.message_user(
-                request,
-                f"Erro inesperado ao registrar numero. Unidade nao foi salva: {exc}",
-                level=messages.ERROR,
-            )
-            return False
-
-    def _desregistrar_meta_antes_de_excluir(self, request, obj):
-        if not self._desassinar_waba_antes_de_excluir(request, obj):
-            return False
-
-        try:
-            status, resposta = desregistrar_numero_whatsapp(obj.phone_number_id)
-
-            if not self._meta_resposta_sucesso(status, resposta):
-                logger.error(
-                    "whatsapp_numero_desregistrar_falhou | acao=bloquear_delete phone_number_id=%s status=%s resposta=%s",
-                    short_value(obj.phone_number_id),
-                    status,
-                    resposta,
-                )
-                self.message_user(
-                    request,
-                    "A WABA foi desassinada, mas a Meta falhou ao "
-                    "desregistrar o numero. Unidade mantida no banco: "
-                    f"{resposta}",
-                    level=messages.ERROR,
-                )
-                return False
-
-            self._marcar_meta_sucesso(
-                request,
-                acao="desregistrar_numero",
-                phone_number_id=obj.phone_number_id,
-            )
-            logger.warning(
-                "whatsapp_numero_desregistrado | acao=permitir_delete phone_number_id=%s status=%s",
-                short_value(obj.phone_number_id),
-                status,
-            )
-            return True
-
-        except Exception as exc:
-            logger.exception(
-                "whatsapp_numero_desregistrar_erro | acao=bloquear_delete phone_number_id=%s erro=%s",
-                short_value(obj.phone_number_id),
-                exc,
-            )
-            self.message_user(
-                request,
-                "A WABA foi desassinada, mas ocorreu um erro ao "
-                "desregistrar o numero. Unidade mantida no banco: "
-                f"{exc}",
-                level=messages.ERROR,
-            )
-            return False
-
-    def _desassinar_waba_antes_de_excluir(self, request, obj):
-        try:
-            status, resposta = desativar_waba_id(obj.waba_id)
-
-            if not self._meta_resposta_sucesso(status, resposta):
-                logger.error(
-                    "whatsapp_waba_desassinar_falhou | "
-                    "acao=bloquear_delete waba_id=%s status=%s "
-                    "resposta=%s",
-                    short_value(obj.waba_id),
-                    status,
-                    resposta,
-                )
-                self.message_user(
-                    request,
-                    "Erro ao remover a assinatura da WABA na Meta. "
-                    f"Unidade mantida no banco: {resposta}",
-                    level=messages.ERROR,
-                )
-                return False
-
-            self._marcar_meta_sucesso(
-                request,
-                acao="desativar_waba",
-                waba_id=obj.waba_id,
-            )
-            logger.warning(
-                "whatsapp_waba_desassinada | acao=continuar_delete "
-                "waba_id=%s status=%s",
-                short_value(obj.waba_id),
-                status,
-            )
-            return True
-
-        except Exception as exc:
-            logger.exception(
-                "whatsapp_waba_desassinar_erro | "
-                "acao=bloquear_delete waba_id=%s erro=%s",
-                short_value(obj.waba_id),
-                exc,
-            )
-            self.message_user(
-                request,
-                "Erro inesperado ao remover a assinatura da WABA. "
-                f"Unidade mantida no banco: {exc}",
-                level=messages.ERROR,
-            )
-            return False
-
-    def _marcar_meta_sucesso(
-        self,
-        request,
-        acao,
-        **identificadores,
-    ):
-        operacoes = list(
-            getattr(request, "_unidade_meta_sucesso", [])
-        )
-        operacoes.append({
-            "acao": acao,
-            **{
-                nome: str(valor)
-                for nome, valor in identificadores.items()
-            },
-        })
-        request._unidade_meta_sucesso = operacoes
-
-    @staticmethod
-    def _meta_sucesso_nesta_requisicao(request):
-        return bool(
-            getattr(
-                request,
-                "_unidade_meta_sucesso",
-                None,
-            )
-        )
-
-    def _marcar_meta_desregistrada_na_requisicao(self, request, obj):
-        ids = getattr(request, "_unidades_meta_desregistradas", set())
-        ids.add(obj.id_unidade)
-        request._unidades_meta_desregistradas = ids
-
-    def _meta_desregistrada_nesta_requisicao(self, request, obj):
-        ids = getattr(request, "_unidades_meta_desregistradas", set())
-        return obj.id_unidade in ids
-
-    def _marcar_cache_validado_na_requisicao(self, request, obj):
-        ids = getattr(request, "_unidades_cache_validadas", set())
-        ids.add(obj.id_unidade)
-        request._unidades_cache_validadas = ids
-
-    def _cache_validado_nesta_requisicao(self, request, obj):
-        ids = getattr(request, "_unidades_cache_validadas", set())
-        return obj.id_unidade in ids
-
-    def _validar_cache_unidades_form(self, form, request, meta_validada):
-        if self._validar_cache_unidades_antes_de_alterar(
-            request,
-            "salvar",
-            meta_validada=meta_validada,
-        ):
-            return
-
-        form.add_error(
-            None,
-            self._mensagem_cache_unidades_falhou(meta_validada),
-        )
-
-    def _validar_cache_unidades_antes_de_alterar(
-        self,
-        request,
-        acao,
-        meta_validada=False,
-    ):
-        try:
-            validar_cache_unidades_disponivel_ou_erro()
-            logger.info(
-                "cache_unidades_preflight_admin_ok | acao=%s",
-                acao,
-            )
-            return True
-
-        except CacheUnidadesIndisponivel as exc:
-            logger.error(
-                "cache_unidades_preflight_admin_falhou | acao=%s erro=%s",
-                acao,
-                exc,
-            )
-
-            if request is not None:
-                self.message_user(
-                    request,
-                    self._mensagem_cache_unidades_falhou(meta_validada),
-                    level=messages.ERROR,
-                )
-
-            return False
-
-    def _responder_falha_banco(
-        self,
-        request,
-        object_id,
-        exc,
-    ):
-        logger.exception(
-            "admin_unidade_banco_falhou | acao=rollback_sem_compensacao object_id=%s meta_ok=%s erro=%s",
-            object_id,
-            self._meta_sucesso_nesta_requisicao(request),
-            exc,
-        )
-        self.message_user(
-            request,
-            self._mensagem_falha_banco(request),
-            level=messages.ERROR,
-        )
-        return HttpResponseRedirect(request.path)
-
-    def _responder_falha_banco_delete(
-        self,
-        request,
-        object_id,
-        exc,
-    ):
-        logger.exception(
-            "admin_unidade_banco_delete_falhou | acao=rollback_sem_compensacao object_id=%s meta_ok=%s erro=%s",
-            object_id,
-            self._meta_sucesso_nesta_requisicao(request),
-            exc,
-        )
-        self.message_user(
-            request,
-            self._mensagem_falha_banco(request),
-            level=messages.ERROR,
-        )
-        return HttpResponseRedirect(
-            reverse(
-                "admin:webhook_unidade_change",
-                args=[object_id],
-            )
-        )
-
-    def _mensagem_falha_banco(self, request):
-        if self._meta_sucesso_nesta_requisicao(request):
-            return (
-                "A Meta concluiu a operação com sucesso, mas o banco "
-                "falhou. A alteração da Meta foi mantida; banco e "
-                "cache de unidades no Redis não foram confirmados. Faça uma "
-                "conferência manual."
-            )
-
-        return (
-            "O banco falhou e nenhuma alteração local foi "
-            "confirmada. Nenhuma operação Meta foi concluída nesta "
-            "requisição."
-        )
-
-    def _mensagem_falha_redis(self, request):
-        if self._meta_sucesso_nesta_requisicao(request):
-            return (
-                "A Meta concluiu a operação com sucesso, mas o Redis "
-                "falhou. A alteração da Meta foi mantida; nenhuma "
-                "alteração foi confirmada no banco ou no cache. Faça "
-                "uma conferência manual."
-            )
-
-        return (
-            "O Redis falhou ao atualizar o cache de unidades. "
-            "Nenhuma alteração foi confirmada no banco."
-        )
-
-    @staticmethod
-    def _mensagem_cache_unidades_falhou(meta_validada):
-        if meta_validada:
-            return (
-                "A Meta concluiu a operação com sucesso, mas o Redis "
-                "falhou. A alteração da Meta foi mantida e a unidade "
-                "não foi salva no banco. Faça uma conferência manual."
-            )
-
-        return (
-            "O Redis falhou ao atualizar o cache de unidades. "
-            "Nenhuma alteração foi feita no banco."
-        )
-
-    @staticmethod
-    def _falha_cache_originada_no_banco(exc):
-        causa = exc.__cause__
-
-        while causa is not None:
-            if isinstance(causa, DatabaseError):
-                return True
-
-            causa = causa.__cause__
-
+    def has_add_permission(self, request):
         return False
 
-    @staticmethod
-    def _meta_resposta_sucesso(status, resposta):
-        if status not in (200, 204):
-            return False
+    def has_change_permission(self, request, obj=None):
+        return False
 
-        if isinstance(resposta, dict) and resposta.get("success") is False:
-            return False
-
-        return True
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
-@admin.register(Cliente)
-class ClienteAdmin(SomenteVisualizacaoAdminMixin, admin.ModelAdmin):
-
-    list_display = (
-        "id_cliente",
-        "nome",
-        "waid_telefone",
-        "email",
-        "idade",
-        "profissao",
-    )
-
-    search_fields = (
-        "nome",
-        "waid_telefone",
-        "email",
-        "profissao",
-    )
-
-    ordering = ("nome",)
-    list_per_page = 50
-    empty_value_display = "-"
+@admin.register(models.Conversa)
+class ConversaAdmin(ConsultasRelacionadasMixin, SomenteConsulta):
+    campo_vinculo = "conversa"
+    consultas = {
+        "pedidos": (models.PedidoConversa, ("numero", "codigo_filial"), ("numero",)),
+        "etiquetas": (models.EtiquetaConversa, ("etiqueta",), ("etiqueta",)),
+        "recuperacao": (models.FallbackContato, ("mensagem_fila_id", "estado", "atualizado_em", "wamid_original"),
+                        ("-atualizado_em", "mensagem_fila_id")),
+    }
+    readonly_fields = ("consultas_do_registro",)
+    list_display = ("id_conversa", "central", "chat_id", "etapa_atual", "status_ativa", "turnos_sem_avanco", "processing", "iniciou_em")
+    list_filter = ("central", "status_ativa", "etapa_atual", "processing")
+    ordering = ("-id_conversa",)
+    search_fields = ("=chat__cliente__waid_telefone", "chat__cliente__nome_titular")
 
 
-@admin.register(Dependente)
-class DependenteAdmin(SomenteVisualizacaoAdminMixin, admin.ModelAdmin):
-
-    list_display = (
-        "id_dependente",
-        "id_cliente",
-        "id_conversa",
-        "nome_dependente",
-        "idade",
-    )
-
-    search_fields = (
-        "nome_dependente",
-        "id_cliente__waid_telefone",
-        "id_cliente__nome",
-    )
-
-    ordering = ("id_dependente",)
-    list_per_page = 50
-    empty_value_display = "-"
-
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related(
-            "id_cliente",
-            "id_conversa",
-        )
+@admin.register(models.Cliente)
+class ClienteAdmin(SomenteConsulta):
+    list_display = ("id_cliente", "nome_titular", "waid_telefone", "username")
+    search_fields = ("nome_titular", "waid_telefone", "username", "=cpf_titular")
+    ordering = ("-id_cliente",)
 
 
-@admin.register(Etapa)
-class EtapaAdmin(SomenteVisualizacaoAdminMixin, admin.ModelAdmin):
+@admin.register(models.Chat)
+class ChatAdmin(SomenteConsulta):
+    list_display = ("id_chat", "central", "cliente")
+    list_filter = ("central",)
+    ordering = ("-id_chat",)
 
-    list_display = (
-        "id_etapa",
-        "nome_etapa",
-        "encerra_automaticamente",
-        "bloqueio_dias",
-        "elegivel_funil",
-    )
 
-    search_fields = ("nome_etapa",)
-    list_filter = (
-        "encerra_automaticamente",
-        "elegivel_funil",
-    )
+@admin.register(models.Etapa)
+class EtapaAdmin(SomenteConsulta):
+    list_display = ("id_etapa", "nome_etapa", "encerra_automaticamente", "bloqueio_dias")
     ordering = ("id_etapa",)
 
-    list_per_page = 50
-    empty_value_display = "-"
+
+@admin.register(models.EtapaTransicao)
+class TransicaoAdmin(SomenteConsulta):
+    list_display = ("origem", "evento", "destino")
+    list_filter = ("origem", "destino")
+    ordering = ("origem_id", "evento")
 
 
-@admin.register(Conversa)
-class ConversaAdmin(SomenteVisualizacaoAdminMixin, admin.ModelAdmin):
-
-    list_display = (
-        "id_conversa",
-        "cliente_link",
-        "id_unidade",
-        "id_etapa_atual",
-        "profissao",
-        "turnos_sem_avanco",
-        "status_ativa",
-        "motivo_encerramento",
-        "last_message_from",
-        "followup_stage",
-        "lead_no_funil",
-        "processing",
-        "last_interaction_at",
-        "iniciou_em",
-    )
-
-    search_fields = (
-        "id_cliente__waid_telefone",
-        "id_cliente__nome",
-        "profissao",
-    )
-
-    list_filter = (
-        "status_ativa",
-        "motivo_encerramento",
-        "turnos_sem_avanco",
-        "lead_no_funil",
-        "last_message_from",
-        "followup_stage",
-        "processing",
-        "id_unidade",
-        "id_etapa_atual",
-    )
-
-    ordering = ("-iniciou_em",)
-
-    date_hierarchy = "iniciou_em"
-    list_per_page = 50
-    empty_value_display = "-"
-
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        return qs.select_related(
-            "id_cliente",
-            "id_unidade",
-            "id_etapa_atual",
-        )
-
-    def cliente_link(self, obj):
-        if not obj.id_cliente:
-            return "-"
-
-        try:
-            url = reverse(
-                "admin:webhook_cliente_change",
-                args=[obj.id_cliente.id_cliente],
-            )
-            return format_html(
-                '<a href="{}">{}</a>',
-                url,
-                obj.id_cliente.nome or obj.id_cliente.waid_telefone,
-            )
-        except NoReverseMatch as exc:
-            logger.exception(
-                "admin_cliente_link_falhou | acao=retornar_texto_sem_link erro=%s",
-                exc,
-            )
-            return obj.id_cliente.nome or obj.id_cliente.waid_telefone
-
-    cliente_link.short_description = "Cliente"
+@admin.register(models.AtendimentoPosVenda)
+class AtendimentoAdmin(SomenteConsulta):
+    list_display = ("conversa", "nome_titular", "produto", "assunto", "perdeu_nota")
+    list_filter = ("produto", "assunto", "perdeu_nota")
+    ordering = ("-conversa_id",)
 
 
-@admin.register(FilaMensagens)
-class FilaMensagensAdmin(SomenteVisualizacaoAdminMixin, admin.ModelAdmin):
-
-    list_display = (
-        "id_mensagem",
-        "id_conversa",
-        "status_colorido",
-        "tipo_mensagem",
-        "cliente_telefone",
-        "id_hash_msg",
-        "received_data_hora",
-        "retry_count",
-        "next_attempt_at",
-        "erro_resumido",
-    )
-
-    search_fields = (
-        "cliente_telefone",
-        "id_hash_msg",
-        "id_conversa__id_conversa",
-    )
-
-    list_filter = (
-        "status",
-        "tipo_mensagem",
-        "id_conversa",
-    )
-
-    ordering = ("-received_data_hora",)
-    date_hierarchy = "received_data_hora"
-
-    list_per_page = 50
-    empty_value_display = "-"
-
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related("id_conversa")
-
-    def status_colorido(self, obj):
-        cores = {
-            "sent": "green",
-            "failed": "red",
-            "pending": "#555",
-            "processing": "orange",
-        }
-        cor = cores.get(obj.status, "#000")
-        return format_html('<b style="color:{};">{}</b>', cor, obj.status)
-
-    status_colorido.short_description = "Status"
-
-    def erro_resumido(self, obj):
-        if not obj.last_error:
-            return "-"
-
-        texto = obj.last_error[:60]
-
-        return format_html(
-            '<span title="{}">{}</span>',
-            obj.last_error,
-            texto + ("..." if len(obj.last_error) > 60 else ""),
-        )
-
-    erro_resumido.short_description = "Erro"
+@admin.register(models.FilaMensagens)
+class FilaAdmin(SomenteConsulta):
+    list_display = ("id_mensagem", "central", "conversa_id", "tipo_mensagem", "status", "retry_count", "received_data_hora")
+    list_filter = ("central", "status", "tipo_mensagem")
+    search_fields = ("=id_hash_msg", "=cliente_telefone", "=user_id_origem")
+    ordering = ("-id_mensagem",)
 
 
-@admin.register(HistoricoMensagens)
-class HistoricoMensagensAdmin(SomenteVisualizacaoAdminMixin, admin.ModelAdmin):
-
-    list_display = (
-        "id_mensagem",
-        "quem_enviou",
-        "tipo_mensagem",
-        "status_envio",
-        "id_conversa",
-        "id_etapa",
-        "id_mensagem_fila",
-        "id_hash_cliente_origem",
-        "cliente_telefone",
-        "received_data_hora",
-    )
-
-    search_fields = (
-        "cliente_telefone",
-        "id_hash_msg",
-        "id_hash_cliente_origem",
-        "id_mensagem_fila__id_mensagem",
-    )
-
-    list_filter = (
-        "quem_enviou",
-        "status_envio",
-        "id_etapa",
-        "tipo_mensagem",
-    )
-
-    ordering = ("-received_data_hora",)
-
-    date_hierarchy = "received_data_hora"
-    list_per_page = 50
-
-    empty_value_display = "-"
-
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        return qs.select_related(
-            "id_conversa",
-            "id_etapa",
-            "id_mensagem_fila",
-        )
+@admin.register(models.HistoricoMensagens)
+class HistoricoAdmin(SomenteConsulta):
+    list_display = ("id_mensagem", "conversa", "etapa", "quem_enviou", "tipo_mensagem", "status_envio", "received_data_hora")
+    list_filter = ("quem_enviou", "status_envio", "etapa")
+    search_fields = ("=id_hash_msg", "=id_hash_cliente_origem")
+    ordering = ("-id_mensagem",)
 
 
-@admin.register(RespostasDesafios)
-class RespostasDesafiosAdmin(SomenteVisualizacaoAdminMixin, admin.ModelAdmin):
-
-    list_display = (
-        "id_resposta_desafio",
-        "id_conversa",
-        "id_etapa",
-        "resposta",
-        "id_historico_mensagem_cliente",
-        "criado_em",
-    )
-
-    search_fields = (
-        "resposta",
-    )
-
-    list_filter = (
-        "id_etapa",
-    )
-
-    ordering = ("-criado_em",)
-    date_hierarchy = "criado_em"
-    list_per_page = 50
-    empty_value_display = "-"
-
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related(
-            "id_conversa",
-            "id_etapa",
-        )
+@admin.register(models.FilialCompra)
+class FilialAdmin(SomenteConsulta):
+    list_display = ("codigo", "nome")
+    search_fields = ("codigo", "nome")
+    ordering = ("codigo",)
 
 
-@admin.register(PesquisaSatisfacao)
-class PesquisaSatisfacaoAdmin(SomenteVisualizacaoAdminMixin, admin.ModelAdmin):
-
-    list_display = (
-        "id_pesquisa_satisfacao",
-        "id_conversa",
-        "nota",
-        "comentario",
-        "criado_em",
-        "atualizado_em",
-    )
-
-    search_fields = (
-        "id_conversa__id_conversa",
-        "id_conversa__id_cliente__nome",
-        "comentario",
-    )
-
-    list_filter = ("nota",)
-    ordering = ("-atualizado_em",)
-    date_hierarchy = "atualizado_em"
-    list_per_page = 50
-    empty_value_display = "-"
-
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related(
-            "id_conversa",
-            "id_conversa__id_cliente",
-        )
+@admin.register(models.SolicitacaoContato)
+class SolicitacaoAdmin(SomenteConsulta):
+    list_display = ("conversa", "motivo", "etapa_retomada", "erros_cliente")
 
 
-@admin.register(WebhookFloodEvento)
-class WebhookFloodEventoAdmin(SomenteVisualizacaoAdminMixin, admin.ModelAdmin):
-
-    list_display = (
-        "id_evento",
-        "wa_id_cliente",
-        "phone_id_unidade",
-        "id_hash_msg",
-        "received_at",
-    )
-
-    search_fields = (
-        "wa_id_cliente",
-        "phone_id_unidade",
-        "id_hash_msg",
-    )
-
-    list_filter = ("phone_id_unidade",)
+@admin.register(models.WebhookFloodEvento)
+class FloodAdmin(SomenteConsulta):
+    list_display = ("id_hash_msg", "central", "wa_id_cliente", "received_at")
+    list_filter = ("central",)
     ordering = ("-received_at",)
-    date_hierarchy = "received_at"
-    list_per_page = 50
-    empty_value_display = "-"
 
 
-@admin.register(CacheControle)
-class CacheControleAdmin(SomenteVisualizacaoAdminMixin, admin.ModelAdmin):
-
-    list_display = (
-        "nome",
-        "versao",
-        "atualizado_em",
-    )
-
-    search_fields = ("nome",)
-    ordering = ("nome",)
-    list_per_page = 50
-    empty_value_display = "-"
+@admin.register(models.CacheControle)
+class CacheAdmin(SomenteConsulta):
+    list_display = ("nome", "versao", "atualizado_em")
 
 
-@admin.register(ClienteBloqueadoMeta)
-class ClienteBloqueadoMetaAdmin(admin.ModelAdmin):
-
-    list_display = (
-        "id_bloqueio",
-        "cliente_link",
-        "nome",
-        "wa_id_cliente",
-        "id_unidade",
-        "phone_id_unidade",
-    )
-
-    search_fields = (
-        "nome",
-        "wa_id_cliente",
-        "phone_id_unidade",
-        "id_cliente__waid_telefone",
-        "id_cliente__nome",
-        "id_unidade__nome_unidade",
-    )
-
-    list_filter = ("id_unidade",)
-    ordering = ("wa_id_cliente", "id_unidade__nome_unidade")
-    list_per_page = 50
-    empty_value_display = "-"
-
-    def has_add_permission(self, request):
-        return False
-
-    def get_actions(self, request):
-        actions = super().get_actions(request)
-        actions.pop("delete_selected", None)
-        return actions
+@admin.register(models.ContatoInterno)
+class ContatoInternoAdmin(admin.ModelAdmin):
+    list_display = ("waid_telefone",)
+    search_fields = ("=waid_telefone",)
 
     def get_readonly_fields(self, request, obj=None):
-        return [field.name for field in self.model._meta.fields]
-
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related(
-            "id_cliente",
-            "id_unidade",
-        )
-
-    def delete_view(self, request, object_id, extra_context=None):
-        if request.method == "POST":
-            obj = self.get_object(request, object_id)
-
-            if obj and not self._desbloquear_meta_antes_de_excluir(request, obj):
-                return HttpResponseRedirect(
-                    reverse(
-                        "admin:webhook_clientebloqueadometa_change",
-                        args=[object_id],
-                    )
-                )
-
-        return super().delete_view(request, object_id, extra_context)
-
-    def delete_model(self, request, obj):
-        conversas_resetadas = Conversa.objects.filter(
-            id_cliente_id=obj.id_cliente_id,
-            id_unidade_id=obj.id_unidade_id,
-            status_ativa=True,
-        ).update(turnos_sem_avanco=0)
-
-        logger.warning(
-            "admin_bloqueio_meta_excluido | "
-            "acao=resetar_contador_e_excluir_registro "
-            "usuario=%s wa_id_cliente=%s phone_id_unidade=%s "
-            "conversas_resetadas=%s",
-            request.user,
-            short_value(obj.wa_id_cliente),
-            short_value(obj.phone_id_unidade),
-            conversas_resetadas,
-        )
-        super().delete_model(request, obj)
-
-    def delete_queryset(self, request, queryset):
-        logger.warning(
-            "admin_bloqueio_meta_exclusao_massa_bloqueada | acao=manter_registros usuario=%s total=%s",
-            request.user,
-            queryset.count(),
-        )
-        self.message_user(
-            request,
-            "Exclusao em massa desativada. Desbloqueie um cliente por unidade de cada vez.",
-            level=messages.ERROR,
-        )
-
-    def cliente_link(self, obj):
-        if not obj.id_cliente:
-            return "-"
-
-        try:
-            url = reverse(
-                "admin:webhook_cliente_change",
-                args=[obj.id_cliente.id_cliente],
-            )
-            return format_html(
-                '<a href="{}">{}</a>',
-                url,
-                obj.id_cliente.nome or obj.id_cliente.waid_telefone,
-            )
-        except NoReverseMatch as exc:
-            logger.exception(
-                "admin_cliente_link_falhou | acao=retornar_texto_sem_link erro=%s",
-                exc,
-            )
-            return obj.id_cliente.nome or obj.id_cliente.waid_telefone
-
-    cliente_link.short_description = "Cliente"
-
-    def _desbloquear_meta_antes_de_excluir(self, request, obj):
-        try:
-            desbloquear_usuario_meta(obj.wa_id_cliente, obj.phone_id_unidade)
-
-            logger.warning(
-                "admin_cliente_desbloqueado_meta | acao=desbloquear_meta_antes_excluir usuario=%s wa_id_cliente=%s phone_id_unidade=%s",
-                request.user,
-                short_value(obj.wa_id_cliente),
-                short_value(obj.phone_id_unidade),
-            )
-
-            self.message_user(
-                request,
-                f"Cliente {obj.wa_id_cliente} desbloqueado na Meta. Registro removido do banco.",
-                level=messages.SUCCESS,
-            )
-            return True
-
-        except Exception as exc:
-            logger.exception(
-                "admin_desbloqueio_meta_falhou | acao=manter_registro usuario=%s wa_id_cliente=%s phone_id_unidade=%s erro=%s",
-                request.user,
-                short_value(obj.wa_id_cliente),
-                short_value(obj.phone_id_unidade),
-                exc,
-            )
-            self.message_user(
-                request,
-                f"Falha ao desbloquear na Meta. Registro mantido no banco: {exc}",
-                level=messages.ERROR,
-            )
-            return False
-
-
-@admin.register(AtendimentoCustomizado)
-class AtendimentoCustomizadoAdmin(admin.ModelAdmin):
-    list_display = (
-        "id_customizacao",
-        "id_unidade",
-        "nome_agente",
-        "genero",
-        "bpa_ativo",
-        "numero_comercial",
-        "idade_minima_suporte",
-        "email_obrigatorio",
-        "link_agendamento",
-        "link_instagram",
-    )
-    list_filter = ("genero", "bpa_ativo", "email_obrigatorio", "idade_minima_suporte")
-    list_select_related = ("id_unidade",)
-    search_fields = ("id_unidade__nome_unidade", "nome_agente")
-
-    def get_readonly_fields(self, request, obj=None):
-        return ("id_unidade",) if obj else ()
-
-    def has_add_permission(self, request):
-        return False  # A criação é feita junto da unidade, pelo inline obrigatório.
-
-    def has_delete_permission(self, request, obj=None):
-        return False
-
-
-@admin.register(IntegracaoFireAds)
-class IntegracaoFireAdsAdmin(admin.ModelAdmin):
-    list_display = (
-        "id_integracao_fireads",
-        "id_unidade",
-        "integracao_ativa",
-        "contrato_validado",
-        "ativada_em",
-    )
-    list_select_related = ("id_unidade",)
-    search_fields = ("id_unidade__nome_unidade",)
-    readonly_fields = ("ativada_em", "criado_em", "atualizado_em")
-
-    def get_readonly_fields(self, request, obj=None):
-        return self.readonly_fields + (("id_unidade",) if obj else ())
-
-    def has_delete_permission(self, request, obj=None):
-        return False  # Desativar preserva vínculos e snapshots históricos.
-
-
-class FireAdsConsultaAdmin(SomenteVisualizacaoAdminMixin, admin.ModelAdmin):
-    pass
-
-
-@admin.register(ConsultaFireAds)
-class ConsultaFireAdsAdmin(SomenteVisualizacaoAdminMixin, admin.ModelAdmin):
-    list_display = ("id_consulta", "id_conversa", "chat", "id_unidade", "status",
-                    "resultado", "tentativas", "solicitado_em", "consultado_em", "aplicado_em")
-    list_filter = ("status", "resultado", "id_unidade")
-    list_select_related = ("id_conversa", "id_unidade")
-    search_fields = ("=id_consulta", "=id_conversa__id_conversa", "id_unidade__nome_unidade")
-
-    @admin.display(description="Chat", ordering="id_conversa__id_chat")
-    def chat(self, obj):
-        return obj.id_conversa.id_chat_id
-
-
-for modelo in (Chat, EnvioDash):
-    admin.site.register(modelo, FireAdsConsultaAdmin)
+        # O telefone é a chave. Alterá-lo em uma edição criaria outro registro.
+        return ("waid_telefone",) if obj is not None else ()
 ```
 
 ## 52. `callback/webhook/models.py` (alterar)
 
 ```python
-from core.integrations.whatsapp.numero_comercial import numero_comercial_whatsapp_valido
-from core.validacoes.turno import ROTULOS_TURNO
-from core.validacoes.suporte_por_idade import IDADES_MINIMAS_SUPORTE
-
-from django.apps import apps as django_apps
+"""Mapeamento de leitura e administração do schema chatbot, criado pelo DDL do projeto."""
 from django.conf import settings
-from django.contrib.auth import get_permission_codename
+from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
-from django.db import models, router
-from django.db.models.signals import post_migrate
-from django.dispatch import receiver
-from core.validacoes.encerramento_por_idade import ROTULOS_MOTIVOS
-
-
-class Cliente(models.Model):
-    id_cliente = models.AutoField(primary_key=True)
-    nome = models.CharField(max_length=200, blank=True, null=True)
-    waid_telefone = models.CharField(unique=True, max_length=50)
-    email = models.CharField(unique=True, max_length=200, blank=True, null=True)
-    idade = models.IntegerField(blank=True, null=True)
-    profissao = models.CharField(max_length=100, blank=True, null=True)
-
-    def __str__(self):
-        return self.nome or self.waid_telefone
-
-    class Meta:
-        managed = False
-        db_table = 'cliente'
-
-
-class Dependente(models.Model):
-    id_dependente = models.AutoField(primary_key=True)
-    id_cliente = models.ForeignKey(
-        Cliente,
-        models.CASCADE,
-        db_column='id_cliente',
-        related_name='dependentes',
-    )
-    id_conversa = models.ForeignKey(
-        'Conversa',
-        models.CASCADE,
-        db_column='id_conversa',
-        related_name='dependentes_atendidos',
-        blank=True,
-        null=True,
-    )
-    nome_dependente = models.CharField(max_length=200, blank=True, null=True)
-    idade = models.IntegerField(blank=True, null=True)
-
-    def __str__(self):
-        return self.nome_dependente or str(self.id_dependente)
-
-    class Meta:
-        managed = False
-        db_table = 'dependente'
-
-
-class Conversa(models.Model):
-    id_chat = models.ForeignKey('Chat', models.DO_NOTHING, db_column='id_chat')
-    origem_fireads = models.CharField(max_length=20, null=True, blank=True, choices=[('google','Google Ads'),('meta','Meta Ads'),('organico_site','Orgânico Site'),('chat_fire','Chat Fire'),('organico','Orgânico')])
-    contexto_fireads = models.JSONField(null=True, blank=True)
-    contexto_coleta = models.JSONField(null=True, blank=True, editable=False)
-    lead_no_dash = models.BooleanField(null=True, blank=True, default=None)
-
-    turno = models.CharField(
-        "turno de preferência", max_length=6, blank=True, null=True,
-        choices=list(ROTULOS_TURNO.items()),
-        help_text="Preferência informada no atendimento; não confirma dia ou horário.",
-    )
-    id_conversa = models.AutoField(primary_key=True)
-    id_cliente = models.ForeignKey(Cliente, models.DO_NOTHING, db_column='id_cliente')
-    id_unidade = models.ForeignKey('Unidade', models.DO_NOTHING, db_column='id_unidade')
-    id_etapa_atual = models.ForeignKey('Etapa', models.DO_NOTHING, db_column='id_etapa_atual', blank=True, null=True)
-    status_ativa = models.BooleanField(default=True)
-    status_dependente = models.BooleanField(blank=True, null=True, default=False)
-    profissao = models.CharField(max_length=100, blank=True, null=True)
-    last_interaction_at = models.DateTimeField(blank=True, null=True)
-    last_message_from = models.CharField(
-        max_length=10,
-        blank=True,
-        null=True,
-        choices=[("cliente", "cliente"), ("bot", "bot")],
-    )
-    followup_stage = models.IntegerField(blank=True, null=True, default=0)
-    followup_last_sent_at = models.DateTimeField(blank=True, null=True)
-    lead_no_funil = models.BooleanField(blank=True, null=True, default=False)
-    processing = models.BooleanField(blank=True, null=True, default=False)
-    processing_started_at = models.DateTimeField(blank=True, null=True)
-    lock_version = models.IntegerField(blank=True, null=True, default=0)
-    turnos_sem_avanco = models.IntegerField(default=0)
-    iniciou_em = models.DateTimeField()
-    finalizou_em = models.DateTimeField(blank=True, null=True)
-    motivo_encerramento = models.CharField(
-        max_length=30,
-        blank=True,
-        null=True,
-        choices=[*ROTULOS_MOTIVOS.items(),
-                 ("foi_agendado", "Foi agendado"),
-                 ("followup_sem_resposta", "Último follow-up sem resposta"),
-                 ("atualizacao_followup", "Encerrada na atualização dos follow-ups")],
-    )
-
-    class Meta:
-        managed = False
-        db_table = 'conversa'
-
-
-class Etapa(models.Model):
-    id_etapa = models.AutoField(primary_key=True)
-    nome_etapa = models.CharField(unique=True, max_length=100)
-    encerra_automaticamente = models.BooleanField(default=False)
-    bloqueio_dias = models.PositiveIntegerField(default=0)
-    elegivel_funil = models.BooleanField(default=False)
-
-    class Meta:
-        managed = False
-        db_table = 'etapa'
-
-
-class FilaMensagens(models.Model):
-    id_mensagem = models.AutoField(primary_key=True)
-    id_conversa = models.ForeignKey(
-        Conversa,
-        models.SET_NULL,
-        db_column='id_conversa',
-        blank=True,
-        null=True,
-    )
-    status = models.CharField(
-        max_length=20,
-        default="pending",
-        choices=[
-            ("pending", "pending"),
-            ("processing", "processing"),
-            ("sent", "sent"),
-            ("failed", "failed"),
-        ],
-    )
-    retry_count = models.IntegerField(blank=True, null=True, default=0)
-    next_attempt_at = models.DateTimeField(blank=True, null=True)
-    processing_started_at = models.DateTimeField(blank=True, null=True)
-    received_data_hora = models.DateTimeField()
-    cliente_telefone = models.CharField(max_length=100)
-    conteudo_texto = models.TextField(blank=True, null=True)
-    tipo_mensagem = models.CharField(max_length=20)
-    id_hash_msg = models.CharField(unique=True, max_length=255)
-    id_phone_unidade = models.CharField(max_length=100)
-    unidade_telefone = models.CharField(max_length=100)
-    last_error = models.TextField(blank=True, null=True)
-
-    class Meta:
-        managed = False
-        db_table = 'fila_mensagens'
-
-
-class HistoricoMensagens(models.Model):
-    id_mensagem = models.AutoField(primary_key=True)
-
-    id_conversa = models.ForeignKey(
-        Conversa,
-        models.DO_NOTHING,
-        db_column='id_conversa'
-    )
-
-    id_etapa = models.ForeignKey(
-        Etapa,
-        models.DO_NOTHING,
-        db_column='id_etapa',
-        blank=True,
-        null=True
-    )
-
-    received_data_hora = models.DateTimeField()
-
-    cliente_telefone = models.CharField(max_length=100)
-    conteudo_texto = models.TextField(blank=True, null=True)
-    tipo_mensagem = models.CharField(max_length=20)
-    id_hash_msg = models.CharField(max_length=255)
-    id_mensagem_fila = models.ForeignKey(
-        FilaMensagens,
-        models.SET_NULL,
-        db_column='id_mensagem_fila',
-        blank=True,
-        null=True,
-        related_name='historicos_originados',
-    )
-    id_hash_cliente_origem = models.CharField(max_length=255, blank=True, null=True)
-    id_phone_unidade = models.CharField(max_length=100)
-    unidade_telefone = models.CharField(max_length=100)
-    quem_enviou = models.CharField(
-        max_length=10,
-        choices=[
-            ("cliente", "cliente"),
-            ("bot", "bot"),
-        ],
-    )
-    status_envio = models.CharField(
-        max_length=20,
-        blank=True,
-        null=True,
-        choices=[
-            ("pending", "pending"),
-            ("sent", "sent"),
-            ("failed", "failed"),
-        ],
-    )
-
-    class Meta:
-        managed = False
-        db_table = 'historico_mensagens'
-        constraints = [
-            models.UniqueConstraint(
-                fields=["id_mensagem", "received_data_hora"],
-                name="uq_historico_mensagens_id_data",
-            ),
-        ]
-
-
-class RespostasDesafios(models.Model):
-    id_resposta_desafio = models.AutoField(primary_key=True)
-    id_conversa = models.ForeignKey(
-        Conversa,
-        models.CASCADE,
-        db_column='id_conversa',
-        related_name='respostas_desafios',
-    )
-    id_etapa = models.ForeignKey(
-        Etapa,
-        models.DO_NOTHING,
-        db_column='id_etapa',
-        related_name='respostas_desafios',
-    )
-    resposta = models.CharField(max_length=20)
-    id_historico_mensagem_cliente = models.IntegerField(blank=True, null=True)
-    criado_em = models.DateTimeField()
-
-    class Meta:
-        managed = False
-        db_table = 'respostas_desafios'
-        constraints = [
-            models.UniqueConstraint(
-                fields=["id_conversa", "id_etapa"],
-                name="uq_respostas_desafios_conversa_etapa",
-            ),
-        ]
-
-
-class PesquisaSatisfacao(models.Model):
-    id_pesquisa_satisfacao = models.AutoField(primary_key=True)
-    id_conversa = models.OneToOneField(
-        Conversa,
-        models.CASCADE,
-        db_column='id_conversa',
-        related_name='pesquisa_satisfacao',
-    )
-    nota = models.PositiveSmallIntegerField(blank=True, null=True)
-    comentario = models.TextField(blank=True, null=True)
-    criado_em = models.DateTimeField()
-    atualizado_em = models.DateTimeField()
-
-    class Meta:
-        managed = False
-        db_table = 'pesquisa_satisfacao'
-        verbose_name = 'Pesquisa de satisfação'
-        verbose_name_plural = 'Pesquisas de satisfação'
-
-
-class Unidade(models.Model):
-    class Genero(models.TextChoices):
-        MASCULINO = "masculino", "Masculino"
-        FEMININO = "feminino", "Feminino"
-
-    id_unidade = models.AutoField(primary_key=True)
-    nome_unidade = models.CharField(
-        "nome da unidade",
-        unique=True,
-        max_length=300,
-    )
-    cnpj = models.CharField(unique=True, max_length=50)
-    email_responsavel = models.CharField(unique=True, max_length=255)
-    telefone = models.CharField(unique=True, max_length=20)
-    waba_id = models.CharField(
-        unique=True,
-        max_length=100,
-    )
-    phone_number_id = models.CharField(unique=True, max_length=100)
-    horarios_funcionamento = models.TextField(
-        'horário de funcionamento', blank=True, null=True,
-        help_text=(
-            'Informe somente os dias e horários, sem o prefixo '
-            '“Nosso horário de funcionamento é de”. Deixe vazio para omitir esse trecho.'
-        ),
-    )
-    id_fuso = models.IntegerField(blank=True, null=True, editable=False)
-    nome_fuso = models.TextField(blank=True, null=True, editable=False)
-    fuso_verificado_em = models.DateTimeField(blank=True, null=True, editable=False)
-    status_pagamento = models.BooleanField(
-        "status pagamento / unidade ativa",
-        blank=True, null=True, default=True,
-        help_text=(
-            "Sim: habilita o atendimento e os workers da unidade. Não ou desconhecido: "
-            "suspende atendimento, follow-up, Funil, FireAds e consumo Meta, preservando "
-            "o histórico e as pendências. Uma requisição externa já iniciada pode concluir."
-        ),
-    )
-    id_usuario_monitoramento = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        models.SET_NULL,
-        db_column='id_usuario_monitoramento',
-        related_name='unidade_monitorada',
-        verbose_name='usuário de monitoramento',
-        blank=True,
-        null=True,
-        limit_choices_to={'is_staff': False, 'is_superuser': False},
-        help_text=(
-            'Selecione uma conta comum cadastrada em Usuários. '
-            'Cada conta pode monitorar somente uma unidade. '
-            'Deixe vazio para manter a unidade sem acesso de monitoramento.'
-        ),
-    )
-
-    @property
-    def nome_agente(self):
-        return self.atendimento_customizado.nome_agente
-
-    @property
-    def genero(self):
-        return self.atendimento_customizado.genero
-
-    @property
-    def numero_comercial(self):
-        return self.atendimento_customizado.numero_comercial
-
-    @property
-    def idade_minima_suporte(self):
-        return self.atendimento_customizado.idade_minima_suporte
-
-    @property
-    def email_obrigatorio(self):
-        return self.atendimento_customizado.email_obrigatorio
-
-    @property
-    def link_agendamento(self):
-        return self.atendimento_customizado.link_agendamento
-
-    @property
-    def link_instagram(self):
-        return self.atendimento_customizado.link_instagram
-
-    @property
-    def bpa_ativo(self):
-        return self.atendimento_customizado.bpa_ativo
-
-    def clean(self):
-        super().clean()
-        if self.id_usuario_monitoramento_id and (
-            self.id_usuario_monitoramento.is_staff
-            or self.id_usuario_monitoramento.is_superuser
-        ):
-            raise ValidationError({
-                'id_usuario_monitoramento': (
-                    'O monitoramento exige uma conta sem acesso ao Admin '
-                    'e sem status de superusuário.'
-                ),
-            })
-
-    def __str__(self):
-        return self.nome_unidade
-
-    class Meta:
-        managed = False
-        db_table = 'unidade'
+from django.db import models
+from django.db.models.functions import Right
 
 
 class CentralPosVenda(models.Model):
@@ -9148,7 +7450,7 @@ class CentralPosVenda(models.Model):
     id_central = models.AutoField(primary_key=True)
     nome = models.CharField("nome da central")
     nome_agente = models.CharField("nome do agente")
-    genero_agente = models.CharField("gênero do agente", choices=Unidade.Genero.choices)
+    genero_agente = models.CharField("gênero do agente", choices=[("masculino", "Masculino"), ("feminino", "Feminino")])
     ativa = models.BooleanField(default=True, help_text="Habilita o atendimento desta central.")
     waba_id = models.CharField("WABA ID", help_text="ID da conta empresarial (messaging_account_id).")
     phone_number_id = models.CharField("Phone Number ID", unique=True)
@@ -9192,439 +7494,339 @@ class CentralPosVenda(models.Model):
         verbose_name_plural = "centrais de pós-venda"
 
 
-@receiver(post_migrate, sender=CentralPosVenda._meta.app_config)
-def criar_permissoes_central(sender, using, apps=django_apps, **kwargs):
-    # O webhook tem um pacote de migrations vazio. Seu modelo não aparece
-    # no estado histórico usado pelo post_migrate padrão do Django.
-    try:
-        permissao = apps.get_model("auth", "Permission")
-        tipo = apps.get_model("contenttypes", "ContentType")
-    except LookupError:
-        return
-    if not router.allow_migrate_model(using, permissao):
-        return
-    content_type = tipo.objects.db_manager(using).get_for_model(CentralPosVenda)
-    opts = CentralPosVenda._meta
-    for acao in opts.default_permissions:
-        permissao.objects.using(using).get_or_create(
-            content_type=content_type, codename=get_permission_codename(acao, opts),
-            defaults={"name": f"Can {acao} {opts.verbose_name_raw}"},
-        )
 
-
-class EnderecoUnidade(models.Model):
-    id_unidade = models.OneToOneField(
-        Unidade, models.CASCADE, primary_key=True, db_column='id_unidade',
-        related_name='endereco_cadastrado', verbose_name='unidade',
-    )
-    endereco = models.TextField('endereço público')
-
-    def clean(self):
-        super().clean()
-        self.endereco = (self.endereco or '').strip()
-        if not self.endereco:
-            raise ValidationError({'endereco': 'Informe o endereço da unidade.'})
+class Cliente(models.Model):
+    id_cliente = models.AutoField(primary_key=True)
+    waid_telefone = models.CharField(unique=True, blank=True, null=True)
+    username = models.TextField(blank=True, null=True)
+    username_observado_em = models.DateTimeField(blank=True, null=True)
+    nome_titular = models.TextField(blank=True, null=True)
+    cpf_titular = models.CharField(max_length=11, blank=True, null=True)
+    cidade_loja_compra = models.TextField(blank=True, null=True)
 
     def __str__(self):
-        return str(self.id_unidade)
+        return self.nome_titular or f"Cliente {self.pk}"
 
     class Meta:
         managed = False
-        db_table = 'endereco_unidade'
-        verbose_name = 'Endereço da unidade'
-        verbose_name_plural = 'Endereços das unidades'
+        db_table = "cliente"
 
 
-class IntegracaoFunilUnidade(models.Model):
-    id_integracao_funil = models.AutoField(primary_key=True)
-    id_unidade = models.OneToOneField(
-        Unidade,
-        models.CASCADE,
-        db_column='id_unidade',
-        related_name='integracao_funil',
-    )
-    nome_widget = models.CharField(max_length=300)
-    data_salvamento_widget = models.DateField(blank=True, null=True)
-    codigo_widget = models.CharField(unique=True, max_length=100)
-    link_api_carrossel = models.URLField(unique=True, max_length=500)
-    codigo_canal_venda = models.CharField(max_length=100)
-    widget_ativo = models.BooleanField(default=True)
-    integracao_ativa = models.BooleanField(default=True)
-    criado_em = models.DateTimeField(auto_now_add=True)
-    atualizado_em = models.DateTimeField(auto_now=True)
-
-    def __str__(self):
-        return f"{self.id_unidade} / {self.nome_widget}"
+class ContatoInterno(models.Model):
+    waid_telefone = models.CharField("telefone", primary_key=True)
 
     class Meta:
         managed = False
-        db_table = 'integracao_funil_unidade'
-        verbose_name = 'Integração do Funil por unidade'
-        verbose_name_plural = 'Integrações do Funil por unidade'
-
-
-class FunilEnvio(models.Model):
-    id_funil_envio = models.AutoField(primary_key=True)
-    id_conversa = models.OneToOneField(
-        Conversa,
-        models.CASCADE,
-        db_column='id_conversa',
-        related_name='envio_funil',
-    )
-    status = models.CharField(
-        max_length=20,
-        default='pending',
-        choices=[
-            ('pending', 'pending'),
-            ('processing', 'processing'),
-            ('sent', 'sent'),
-        ],
-    )
-    attempt_count = models.IntegerField(default=0)
-    next_attempt_at = models.DateTimeField()
-    processing_started_at = models.DateTimeField(blank=True, null=True)
-    enviado_em = models.DateTimeField(blank=True, null=True)
-    ultimo_erro = models.TextField(blank=True, null=True)
-    resposta_funil = models.TextField(blank=True, null=True)
-    snapshot = models.JSONField(blank=True, null=True)
-    criado_em = models.DateTimeField()
-    atualizado_em = models.DateTimeField()
-
-    class Meta:
-        managed = False
-        db_table = 'funil_envios'
-        verbose_name = 'Envio ao Funil'
-        verbose_name_plural = 'Envios ao Funil'
-
-
-class ClienteBloqueadoMeta(models.Model):
-    id_bloqueio = models.AutoField(primary_key=True)
-    id_cliente = models.ForeignKey(
-        Cliente,
-        models.SET_NULL,
-        db_column='id_cliente',
-        blank=True,
-        null=True,
-        related_name='bloqueios_meta',
-    )
-    nome = models.CharField(max_length=200, blank=True, null=True)
-    wa_id_cliente = models.CharField(max_length=50)
-    id_unidade = models.ForeignKey(
-        Unidade,
-        models.DO_NOTHING,
-        db_column='id_unidade',
-        related_name='bloqueios_meta',
-    )
-    phone_id_unidade = models.CharField(max_length=100)
-
-    def __str__(self):
-        return f"{self.wa_id_cliente} / {self.phone_id_unidade}"
-
-    class Meta:
-        managed = False
-        db_table = 'cliente_bloqueado_meta'
-        constraints = [
-            models.UniqueConstraint(
-                fields=["wa_id_cliente", "id_unidade"],
-                name="uq_cliente_bloqueado_meta_wa_unidade",
-            ),
-        ]
-
-
-class WebhookFloodEvento(models.Model):
-    id_evento = models.BigAutoField(primary_key=True)
-    wa_id_cliente = models.CharField(max_length=50)
-    phone_id_unidade = models.CharField(max_length=100)
-    id_hash_msg = models.CharField(unique=True, max_length=255)
-    received_at = models.DateTimeField()
-
-    def __str__(self):
-        return f"{self.wa_id_cliente} / {self.phone_id_unidade}"
-
-    class Meta:
-        managed = False
-        db_table = 'webhook_flood_evento'
-
-
-class CacheControle(models.Model):
-    nome = models.CharField(primary_key=True, max_length=100)
-    versao = models.BigIntegerField(default=1)
-    atualizado_em = models.DateTimeField()
-
-    def __str__(self):
-        return self.nome
-
-    class Meta:
-        managed = False
-        db_table = 'cache_controle'
-
-
-class ConsumoMensalMeta(models.Model):
-    """Espelho de leitura; o worker persiste pelo repositório e a migração é SQL."""
-
-    pk = models.CompositePrimaryKey('id_central', 'mes_referencia')
-    id_central = models.IntegerField()
-    mes_referencia = models.DateField()
-    waba_id = models.CharField(max_length=100)
-    phone_number_id = models.CharField(max_length=100)
-    timezone_id = models.IntegerField(null=True, blank=True)
-    fuso_horario = models.TextField()
-    data_hora_inicio = models.DateTimeField(null=True, blank=True)
-    data_hora_fim = models.DateTimeField(null=True, blank=True)
-    qtd_janela_gratuita = models.BigIntegerField(null=True, blank=True)
-    qtd_franquia_consumida = models.BigIntegerField(null=True, blank=True)
-    qtd_gratuitas = models.BigIntegerField()
-    qtd_cobradas_meta = models.BigIntegerField()
-    valor_meta = models.DecimalField(max_digits=14, decimal_places=6, null=True, blank=True)
-    moeda = models.CharField(max_length=3, null=True, blank=True)
-    franquia_meta_mensal = models.IntegerField(default=1000)
-    beneficio_esl_mensal = models.IntegerField(default=1000)
-    tarifa_referencia_brl = models.DecimalField(max_digits=12, decimal_places=6)
-    tarifa_vigencia = models.DateField()
-    consultado_ate = models.DateTimeField()
-    ultimo_sucesso_em = models.DateTimeField(null=True, blank=True)
-    status_apuracao = models.TextField(default="pendente_detalhamento", choices=[
-        ("pendente_detalhamento", "Detalhamento pendente"),
-        ('em_andamento', 'Em andamento'), ('em_conferencia', 'Em conferência'),
-        ('consolidado', 'Consolidado'),
-    ])
-    data_proxima_consolidacao = models.DateField(null=True, blank=True)
-    consolidado_em = models.DateTimeField(null=True, blank=True)
-    ultima_decisao_consolidacao_em = models.DateTimeField(null=True, blank=True)
-    atualizado_em = models.DateTimeField()
-
-    class Meta:
-        managed = False
-        db_table = 'consumo_mensal_meta'
-
-
-class ConsumoMetaColeta(models.Model):
-    """Agenda de conta/período; também existe quando a primeira consulta falha."""
-
-    pk = models.CompositePrimaryKey('id_central', 'periodo')
-    id_central = models.IntegerField()
-    periodo = models.CharField(max_length=7)
-    proxima_consulta_em = models.DateTimeField()
-    ultima_tentativa_em = models.DateTimeField(null=True, blank=True)
-    ultimo_erro = models.TextField(null=True, blank=True)
-    falhas_consecutivas = models.IntegerField(default=0)
-
-    class Meta:
-        managed = False
-        db_table = 'consumo_meta_coletas'
-
-
-class AtendimentoCustomizado(models.Model):
-    Genero = Unidade.Genero
-    id_customizacao = models.AutoField(primary_key=True)
-    id_unidade = models.OneToOneField(
-        Unidade,
-        models.CASCADE,
-        db_column="id_unidade",
-        related_name="atendimento_customizado",
-    )
-    nome_agente = models.CharField("nome do agente", max_length=100)
-    genero = models.CharField(
-        "gênero do agente",
-        max_length=9,
-        choices=Genero.choices,
-    )
-    numero_comercial = models.CharField(
-        max_length=30,
-        help_text="Contato comercial obrigatório para toda unidade.",
-    )
-    idade_minima_suporte = models.IntegerField(
-        "encaminhar titular ao comercial a partir de",
-        blank=True,
-        null=True,
-        default=None,
-        choices=[(None, "Desativado")]
-        + [(idade, f"{idade}+") for idade in IDADES_MINIMAS_SUPORTE],
-        help_text=(
-            "Na etapa de idade, encaminha somente o titular a partir do limite "
-            "até 89 anos e encerra sem bloqueio; 90+ é universal. Não altera a regra de e-mail."
-        ),
-    )
-    email_obrigatorio = models.BooleanField(
-        "e-mail obrigatório",
-        default=True,
-        help_text=("Exige um e-mail válido, exceto do titular com 60 anos ou mais."),
-    )
-    link_agendamento = models.CharField(
-        unique=True,
-        max_length=400,
-        blank=True,
-        null=True,
-        help_text="Vazio: coleta o turno e entrega ao comercial após a triagem.",
-    )
-    link_instagram = models.CharField(
-        max_length=400,
-        blank=True,
-        null=True,
-    )
-    bpa_ativo = models.BooleanField(default=False)
-
-    def clean(self):
-        super().clean()
-        self.link_agendamento = (self.link_agendamento or "").strip() or None
-        if not numero_comercial_whatsapp_valido(self.numero_comercial):
-            raise ValidationError(
-                {"numero_comercial": "Informe um número comercial brasileiro válido."}
-            )
-
-    def __str__(self):
-        return str(self.id_unidade)
-
-    class Meta:
-        managed = False
-        db_table = "atendimento_customizado"
-        verbose_name = "Atendimento customizado"
-        verbose_name_plural = "Atendimentos customizados"
-
-
-class IntegracaoFireAds(models.Model):
-    id_integracao_fireads = models.AutoField(primary_key=True)
-    id_unidade = models.OneToOneField(
-        Unidade,
-        models.CASCADE,
-        db_column="id_unidade",
-        related_name="integracao_fireads",
-    )
-    integracao_ativa = models.BooleanField(default=False)
-    url_dashbord = models.URLField(max_length=1000)
-    url_operation = models.URLField(
-        max_length=1000,
-        blank=True,
-        null=True,
-        help_text="Referência do editor. Nunca usada para requisições.",
-    )
-    aba_destino = models.CharField(
-        "Aba de leads", max_length=200, default="LEADS GERAL - Feedback",
-        help_text="Aba única para consultar formulários e acrescentar observações.",
-    )
-    fuso_formularios = models.CharField(
-        max_length=100,
-        null=True,
-        blank=True,
-        help_text="Somente interpretação de datas sem offset. Preencher após confirmação na planilha; não altera o fuso externo.",
-    )
-    contrato_validado = models.BooleanField(
-        default=False,
-        help_text="Confirmar a aba de leads, os cabeçalhos e os valores de Canal e Para quem é antes de ativar.",
-    )
-    ativada_em = models.DateTimeField(null=True, blank=True, editable=False)
-    criado_em = models.DateTimeField(auto_now_add=True)
-    atualizado_em = models.DateTimeField(auto_now=True)
-
-    def clean(self):
-        super().clean()
-        from core.integrations.fireads.cliente import validar_url
-        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
-        try:
-            validar_url(self.url_dashbord)
-        except ValueError as exc:
-            raise ValidationError({"url_dashbord": str(exc)})
-        self.fuso_formularios = (self.fuso_formularios or "").strip() or None
-        if self.fuso_formularios:
-            try:
-                ZoneInfo(self.fuso_formularios)
-            except ZoneInfoNotFoundError:
-                raise ValidationError({"fuso_formularios": "Fuso IANA inválido."})
-        if self.integracao_ativa and not self.contrato_validado:
-            raise ValidationError(
-                {"contrato_validado": "Confira o contrato de leitura antes de ativar."}
-            )
-        self.aba_destino = self.aba_destino.strip()
-        if not self.aba_destino:
-            raise ValidationError({"aba_destino": "Informe a aba de leads."})
-
-    def __str__(self):
-        return str(self.id_unidade)
-
-    class Meta:
-        managed = False
-        db_table = "integracao_fireads"
-        verbose_name = "Integração FireAds"
-        verbose_name_plural = "Integrações FireAds"
+        db_table = "contato_interno"
+        verbose_name = "contato interno"
 
 
 class Chat(models.Model):
     id_chat = models.BigAutoField(primary_key=True)
-    id_cliente = models.ForeignKey(Cliente, models.CASCADE, db_column="id_cliente")
-    id_unidade = models.ForeignKey(Unidade, models.CASCADE, db_column="id_unidade")
-    criado_em = models.DateTimeField()
-
-    def __str__(self):
-        return f"{self.id_cliente} / {self.id_unidade}"
+    cliente = models.ForeignKey(Cliente, models.PROTECT, db_column="id_cliente")
+    central = models.ForeignKey(CentralPosVenda, models.PROTECT, db_column="id_central")
 
     class Meta:
         managed = False
         db_table = "chat"
-        constraints = [
-            models.UniqueConstraint(
-                fields=["id_cliente", "id_unidade"], name="uq_chat_cliente_unidade"
-            )
-        ]
+        unique_together = (("cliente", "central"), ("id_chat", "central"))
 
 
-class ConsultaFireAds(models.Model):
-    id_consulta = models.BigAutoField(primary_key=True)
-    id_conversa = models.OneToOneField(Conversa, models.CASCADE, db_column="id_conversa")
-    id_unidade = models.ForeignKey(Unidade, models.CASCADE, db_column="id_unidade")
-    id_integracao_fireads = models.ForeignKey(
-        IntegracaoFireAds, models.PROTECT, db_column="id_integracao_fireads"
-    )
-    status = models.CharField(max_length=20)
-    consulta_concluida = models.BooleanField(default=False)
-    resultado = models.CharField(max_length=30)
-    entrada = models.JSONField()
-    dados = models.JSONField(null=True, blank=True)
-    aplicacao = models.JSONField(null=True, blank=True)
-    solicitado_em = models.DateTimeField()
-    prazo_final = models.DateTimeField()
-    processing_started_at = models.DateTimeField(null=True, blank=True)
-    reserva_ate = models.DateTimeField(null=True, blank=True)
-    consultado_em = models.DateTimeField(null=True, blank=True)
-    aplicado_em = models.DateTimeField(null=True, blank=True)
-    atualizado_em = models.DateTimeField()
-    tentativas = models.IntegerField(default=0)
-    versao_reserva = models.BigIntegerField(default=0)
-    ultimo_erro = models.TextField(null=True, blank=True)
+class Etapa(models.Model):
+    id_etapa = models.IntegerField(primary_key=True)
+    nome_etapa = models.CharField(max_length=100, unique=True)
+    encerra_automaticamente = models.BooleanField(default=False)
+    bloqueio_dias = models.SmallIntegerField(default=0)
 
     def __str__(self):
-        return f"Consulta {self.pk} / conversa {self.id_conversa_id} / {self.status}"
+        return f"{self.pk} · {self.nome_etapa}"
 
     class Meta:
         managed = False
-        db_table = "consulta_fireads"
-        verbose_name_plural = "Consultas FireAds"
+        db_table = "etapa"
 
 
-class EnvioDash(models.Model):
-    id_envio_dash = models.BigAutoField(primary_key=True)
-    id_conversa = models.OneToOneField(
-        Conversa, models.CASCADE, db_column="id_conversa"
-    )
-    id_integracao_fireads = models.ForeignKey(
-        IntegracaoFireAds, models.PROTECT, db_column="id_integracao_fireads"
-    )
-    id_unidade = models.ForeignKey(Unidade, models.CASCADE, db_column="id_unidade")
-    status = models.CharField(max_length=20, default="pending")
-    attempt_count = models.IntegerField(default=0)
+class EtapaTransicao(models.Model):
+    id_transicao = models.AutoField(primary_key=True)
+    origem = models.ForeignKey(Etapa, models.PROTECT, db_column="id_etapa_origem", related_name="saidas")
+    evento = models.CharField(max_length=100)
+    destino = models.ForeignKey(Etapa, models.PROTECT, db_column="id_etapa_destino", related_name="entradas")
+
+    class Meta:
+        managed = False
+        db_table = "etapa_transicao"
+        unique_together = (("origem", "evento"),)
+        verbose_name = "transição de etapa"
+        verbose_name_plural = "mapa de transições"
+
+
+class Conversa(models.Model):
+    id_conversa = models.AutoField(primary_key=True)
+    # O SQL garante que a central seja a do chat por uma chave estrangeira composta.
+    chat = models.ForeignKey(Chat, models.PROTECT, db_column="id_chat")
+    central = models.ForeignKey(CentralPosVenda, models.PROTECT, db_column="id_central", db_constraint=False)
+    etapa_atual = models.ForeignKey(Etapa, models.PROTECT, db_column="id_etapa_atual")
+    iniciou_em = models.DateTimeField()
+    finalizou_em = models.DateTimeField(null=True)
+    status_ativa = models.BooleanField(default=True)
+    motivo_encerramento = models.TextField(null=True)
+    last_interaction_at = models.DateTimeField(null=True)
+    last_message_from = models.CharField(null=True)
+    processing = models.BooleanField(default=False)
+    processing_started_at = models.DateTimeField(null=True)
+    lock_version = models.IntegerField(default=0)
+    turnos_sem_avanco = models.IntegerField(default=0)
+
+    def __str__(self):
+        return f"Conversa {self.pk}"
+
+    class Meta:
+        managed = False
+        db_table = "conversa"
+
+
+class AtendimentoPosVenda(models.Model):
+    conversa = models.OneToOneField(Conversa, models.PROTECT, primary_key=True, db_column="id_conversa")
+    nome_titular = models.TextField(null=True)
+    cpf_titular = models.CharField(max_length=11, null=True)
+    cidade_loja_compra = models.TextField(null=True)
+    produto = models.TextField(null=True)
+    assunto = models.CharField(null=True)
+    perdeu_nota = models.BooleanField(null=True)
+    foi_a_loja = models.BooleanField(null=True)
+    detalhes = models.TextField(null=True)
+    encaminhado_moveis = models.CharField(null=True)
+    encaminhado_sofas = models.CharField(null=True)
+
+    class Meta:
+        managed = False
+        db_table = "atendimento_pos_venda"
+        verbose_name = "atendimento de pós-venda"
+
+
+class FilialCompra(models.Model):
+    codigo = models.TextField(primary_key=True)
+    nome = models.TextField()
+
+    def __str__(self):
+        return f"{self.codigo} · {self.nome}"
+
+    class Meta:
+        managed = False
+        db_table = "filial_compra"
+        verbose_name = "filial de compra"
+        verbose_name_plural = "filiais de compra"
+
+
+class PedidoConversa(models.Model):
+    pk = models.CompositePrimaryKey("conversa", "numero")
+    conversa = models.ForeignKey(Conversa, models.PROTECT, db_column="id_conversa")
+    numero = models.TextField()
+    codigo_filial = models.GeneratedField(expression=Right("numero", 2), output_field=models.TextField(), db_persist=True)
+
+    class Meta:
+        managed = False
+        db_table = "pedido_conversa"
+        verbose_name = "pedido da conversa"
+
+
+class EtiquetaConversa(models.Model):
+    pk = models.CompositePrimaryKey("conversa", "etiqueta")
+    conversa = models.ForeignKey(Conversa, models.PROTECT, db_column="id_conversa")
+    etiqueta = models.CharField()
+
+    class Meta:
+        managed = False
+        db_table = "etiqueta_conversa"
+        verbose_name = "etiqueta da conversa"
+
+
+class FilaMensagens(models.Model):
+    id_mensagem = models.AutoField(primary_key=True)
+    central = models.ForeignKey(CentralPosVenda, models.PROTECT, db_column="id_central")
+    conversa = models.ForeignKey(Conversa, models.PROTECT, db_column="id_conversa", null=True)
+    cliente = models.ForeignKey(Cliente, models.PROTECT, db_column="id_cliente", null=True)
+    cliente_telefone = models.CharField(null=True)
+    user_id_origem = models.TextField(null=True)
+    username_origem = models.TextField(null=True)
+    id_hash_msg = models.CharField(unique=True)
+    received_data_hora = models.DateTimeField()
+    tipo_mensagem = models.CharField()
+    conteudo_texto = models.TextField(null=True)
+    interativo = models.JSONField(null=True)
+    status = models.CharField(default="pending")
+    retry_count = models.IntegerField(default=0)
     next_attempt_at = models.DateTimeField()
-    processing_started_at = models.DateTimeField(null=True, blank=True)
-    enviado_em = models.DateTimeField(null=True, blank=True)
-    ultimo_erro = models.TextField(null=True, blank=True)
-    recibo = models.JSONField(null=True, blank=True)
-    snapshot = models.JSONField()
-    criado_em = models.DateTimeField()
+    processing_started_at = models.DateTimeField(null=True)
+    last_error = models.TextField(null=True)
+
+    class Meta:
+        managed = False
+        db_table = "fila_mensagens"
+        verbose_name_plural = "fila de mensagens"
+
+
+class HistoricoMensagens(models.Model):
+    id_mensagem = models.BigAutoField(primary_key=True)
+    conversa = models.ForeignKey(Conversa, models.PROTECT, db_column="id_conversa")
+    etapa = models.ForeignKey(Etapa, models.PROTECT, db_column="id_etapa")
+    received_data_hora = models.DateTimeField()
+    quem_enviou = models.CharField()
+    id_hash_msg = models.CharField(unique=True)
+    mensagem_fila = models.ForeignKey(FilaMensagens, models.SET_NULL, db_column="id_mensagem_fila", null=True)
+    id_hash_cliente_origem = models.CharField(null=True)
+    parte_resposta = models.SmallIntegerField(default=1)
+    tipo_mensagem = models.CharField()
+    conteudo_texto = models.TextField(null=True)
+    interativo = models.JSONField(null=True)
+    tipo_destinatario = models.TextField(null=True)
+    valor_destinatario = models.TextField(null=True)
+    status_envio = models.CharField(null=True)
+
+    class Meta:
+        managed = False
+        db_table = "historico_mensagens"
+        verbose_name_plural = "histórico de mensagens"
+
+
+class IdentidadeBsuid(models.Model):
+    pk = models.CompositePrimaryKey("central", "user_id")
+    central = models.ForeignKey(CentralPosVenda, models.PROTECT, db_column="id_central")
+    user_id = models.TextField()
+    cliente = models.ForeignKey(Cliente, models.PROTECT, db_column="id_cliente")
+    wamid_origem = models.TextField()
+    suspender_telefone = models.BooleanField(default=False)
+    vigente = models.BooleanField(default=True)
+
+    class Meta:
+        managed = False
+        db_table = "identidade_bsuid"
+        verbose_name = "identidade por BSUID"
+
+
+class SolicitacaoContato(models.Model):
+    conversa = models.OneToOneField(Conversa, models.PROTECT, db_column="id_conversa", primary_key=True)
+    motivo = models.TextField()
+    etapa_retomada = models.ForeignKey(Etapa, models.PROTECT, db_column="id_etapa_retomada")
+    bsuid_destino = models.TextField()
+    wamid_solicitacao = models.TextField()
+    wamids_aceitos = ArrayField(models.TextField())
+    erros_cliente = models.SmallIntegerField(default=0)
+
+    class Meta:
+        managed = False
+        db_table = "solicitacao_contato"
+        verbose_name = "solicitação de contato"
+        verbose_name_plural = "solicitações de contato"
+
+
+class FallbackContato(models.Model):
+    pk = models.CompositePrimaryKey("conversa", "mensagem_fila")
+    conversa = models.ForeignKey(Conversa, models.PROTECT, db_column="id_conversa")
+    mensagem_fila = models.ForeignKey(FilaMensagens, models.PROTECT, db_column="id_mensagem_fila")
+    wamid_original = models.TextField(null=True, unique=True)
+    estado = models.TextField()
     atualizado_em = models.DateTimeField()
 
     class Meta:
         managed = False
-        db_table = "envios_dash"
-        verbose_name_plural = "Envios ao dashboard"
+        db_table = "fallback_contato"
+        verbose_name = "recuperação de contato"
+
+
+class CacheControle(models.Model):
+    nome = models.CharField(primary_key=True)
+    versao = models.BigIntegerField(default=1)
+    atualizado_em = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "cache_controle"
+        verbose_name_plural = "versões do cache"
+
+
+class ClienteBloqueadoMeta(models.Model):
+    pk = models.CompositePrimaryKey("central", "wa_id_cliente")
+    central = models.ForeignKey(CentralPosVenda, models.PROTECT, db_column="id_central")
+    wa_id_cliente = models.CharField()
+    bloqueado_em = models.DateTimeField(null=True)
+
+    class Meta:
+        managed = False
+        db_table = "cliente_bloqueado_meta"
+        verbose_name = "bloqueio na Meta"
+
+
+class WebhookFloodEvento(models.Model):
+    id_hash_msg = models.CharField(primary_key=True)
+    central = models.ForeignKey(CentralPosVenda, models.PROTECT, db_column="id_central")
+    wa_id_cliente = models.CharField()
+    received_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "webhook_flood_evento"
+        verbose_name_plural = "eventos de proteção contra flood"
+
+
+class MonitoramentoAcesso(models.Model):
+    pk = models.CompositePrimaryKey("usuario", "central")
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, models.CASCADE, db_column="id_usuario_django")
+    central = models.ForeignKey(CentralPosVenda, models.CASCADE, db_column="id_central")
+
+    class Meta:
+        managed = False
+        db_table = "monitoramento_acesso"
+        verbose_name = "acesso ao monitoramento"
+
+
+class ConsumoMensalMeta(models.Model):
+    pk = models.CompositePrimaryKey("central", "mes_referencia")
+    central = models.ForeignKey(CentralPosVenda, models.PROTECT, db_column="id_central")
+    mes_referencia = models.DateField()
+    waba_id = models.CharField()
+    phone_number_id = models.CharField()
+    fuso_horario = models.TextField()
+    qtd_gratuitas = models.BigIntegerField()
+    qtd_cobradas_meta = models.BigIntegerField()
+    valor_meta = models.DecimalField(max_digits=14, decimal_places=6, null=True)
+    moeda = models.CharField(max_length=3, null=True)
+    consultado_ate = models.DateTimeField()
+    consolidado_em = models.DateTimeField(null=True)
+    timezone_id = models.IntegerField(null=True)
+    data_hora_inicio = models.DateTimeField(null=True)
+    data_hora_fim = models.DateTimeField(null=True)
+    qtd_janela_gratuita = models.BigIntegerField(null=True)
+    qtd_franquia_consumida = models.BigIntegerField(null=True)
+    ultimo_sucesso_em = models.DateTimeField(null=True)
+    status_apuracao = models.TextField(default="pendente_detalhamento")
+    data_proxima_consolidacao = models.DateField(null=True)
+    ultima_decisao_consolidacao_em = models.DateTimeField(null=True)
+    franquia_meta_mensal = models.IntegerField(default=1000)
+    beneficio_esl_mensal = models.IntegerField(default=1000)
+    tarifa_referencia_brl = models.DecimalField(max_digits=12, decimal_places=6, default="0.035")
+    tarifa_vigencia = models.DateField()
+    atualizado_em = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "consumo_mensal_meta"
+        verbose_name = "consumo mensal da Meta"
+
+
+class ConsumoMetaColeta(models.Model):
+    pk = models.CompositePrimaryKey("central", "periodo")
+    central = models.ForeignKey(CentralPosVenda, models.CASCADE, db_column="id_central")
+    periodo = models.CharField()
+    proxima_consulta_em = models.DateTimeField()
+    ultima_tentativa_em = models.DateTimeField(null=True)
+    falhas_consecutivas = models.IntegerField(default=0)
+    ultimo_erro = models.TextField(null=True)
+
+    class Meta:
+        managed = False
+        db_table = "consumo_meta_coletas"
+        verbose_name = "coleta de consumo"
 ```
 
 ## 53. `callback/webhook/services/bloqueio_meta_guard.py` (alterar)
@@ -11978,7 +10180,7 @@ from core.logging_config import short_value
 logger = logging.getLogger("whatsapp.waba")
 
 
-def validar_phone_number_id_da_waba(waba_id, phone_number_id, *, waac_id=None):
+def validar_phone_number_id_da_waba(waba_id, phone_number_id, *, waac_id=None, telefone=None):
     """Confirma na Graph API que o phone ID pertence à WABA informada."""
     waba_id = str(waba_id or "").strip()
     phone_number_id = str(phone_number_id or "").strip()
@@ -11994,7 +10196,7 @@ def validar_phone_number_id_da_waba(waba_id, phone_number_id, *, waac_id=None):
         "Authorization": f"Bearer {get_token_usuario_meta()}",
     }
     params = {
-        "fields": "id,display_phone_number" if waac_id else "id",
+        "fields": "id,display_phone_number" if waac_id or telefone else "id",
         "limit": 100,
     }
     paginas_consultadas = 0
@@ -12048,6 +10250,9 @@ def validar_phone_number_id_da_waba(waba_id, phone_number_id, *, waac_id=None):
         for numero in numeros:
             if not isinstance(numero, dict) or str(numero.get("id")) != phone_number_id:
                 continue
+            telefone_waba = re.sub(r"\D", "", str(numero.get("display_phone_number") or ""))
+            if telefone and telefone_waba != re.sub(r"\D", "", telefone):
+                return response.status_code, {"success": False, "reason": "telefone_divergente"}
             if waac_id:
                 # Antes de registrar um recurso diferente, exija da Meta o mesmo
                 # telefone do recurso listado na WABA. Uma resposta sem número é inconclusiva.
@@ -12055,7 +10260,6 @@ def validar_phone_number_id_da_waba(waba_id, phone_number_id, *, waac_id=None):
                     construir_url_graph_api(waac_id), headers=headers,
                     params={"fields": "display_phone_number"}, timeout=get_meta_http_timeout(),
                 )
-                telefone_waba = re.sub(r"\D", "", str(numero.get("display_phone_number") or ""))
                 telefone_waac = _normalizar_resposta(consulta).get("display_phone_number")
                 if (not consulta.ok or not telefone_waba
                         or telefone_waba != re.sub(r"\D", "", str(telefone_waac or ""))):
@@ -12210,6 +10414,7 @@ def _normalizar_resposta(response):
 """Validação e provisionamento do remetente no cadastro de centrais."""
 
 import logging
+import re
 
 from django import forms
 from requests.exceptions import RequestException
@@ -12234,12 +10439,20 @@ class CentralPosVendaForm(forms.ModelForm):
         model = CentralPosVenda
         fields = "__all__"
 
+    def clean_telefone(self):
+        valor = self.cleaned_data["telefone"]
+        digitos = re.sub(r"[+ ().-]", "", valor)
+        if not re.fullmatch(r"[1-9][0-9]{7,14}", digitos):
+            raise forms.ValidationError("Informe o telefone da central com o código do país e DDD.")
+        return digitos
+
     def _post_clean(self):
         super()._post_clean()
         # A validação do modelo e a de unicidade já terminaram. Edições de
         # atendimento (inclusive suspender a central) dispensam provisionamento.
         mudou_remetente = {"waba_id", "phone_number_id", "waac_id"}.intersection(self.changed_data)
-        if self.errors or not (self.instance._state.adding or mudou_remetente):
+        provisionar = self.instance._state.adding or bool(mudou_remetente)
+        if self.errors or not (provisionar or "telefone" in self.changed_data):
             return
 
         central = self.instance
@@ -12251,10 +10464,12 @@ class CentralPosVendaForm(forms.ModelForm):
 
         try:
             vinculo = validar_phone_number_id_da_waba(
-                central.waba_id, central.phone_number_id, waac_id=central.waac_id,
+                central.waba_id, central.phone_number_id, waac_id=central.waac_id, telefone=central.telefone,
             )
             if not _meta_confirmou(vinculo):
-                self.add_error(None, "A Meta não confirmou o vínculo entre os identificadores desta central.")
+                self.add_error(None, "A Meta não confirmou o telefone e os identificadores do remetente desta central.")
+                return
+            if not provisionar:
                 return
             if not _meta_confirmou(ativar_waba_id(central.waba_id)):
                 self.add_error("waba_id", "A Meta não confirmou a assinatura da conta para receber webhooks.")
@@ -12738,7 +10953,9 @@ class CadastroCentralTests(unittest.TestCase):
         ddl = Path(__file__).resolve().parents[1] / "core/database/deploy_database/schema.sql"
         with connection.cursor() as cur:
             cur.execute("CREATE SCHEMA chatbot")
-            cur.execute("CREATE TABLE chatbot.auth_user (id integer PRIMARY KEY)")
+        from django.core.management import call_command
+        call_command("migrate", interactive=False, verbosity=0)
+        with connection.cursor() as cur:
             cur.execute(ddl.read_text(encoding="utf-8"))
 
     def setUp(self):
@@ -12773,7 +10990,7 @@ class CadastroCentralTests(unittest.TestCase):
             self.publicar.assert_not_called()
         self.assertEqual(self.chamadas.mock_calls, [
             call.validar_cache_unidades_disponivel_ou_erro(),
-            call.validar_phone_number_id_da_waba("100", "101", waac_id="901"),
+            call.validar_phone_number_id_da_waba("100", "101", waac_id="901", telefone=self.dados["telefone"]),
             call.ativar_waba_id("100"), call.registrar_numero_whatsapp("101", id_registro="901"),
         ])
         self.publicar.assert_called_once()
@@ -12908,6 +11125,130 @@ class CadastroCentralTests(unittest.TestCase):
             self.assertTrue(redis.hexists(cache.REDIS_KEY, "101"))
         self.assertFalse(redis.hexists(cache.REDIS_KEY, "101"))
         self.assertFalse(cache.unidade_esta_ativa("101"))
+
+    def navegador_admin(self):
+        from django.contrib.auth import get_user_model
+        from django.test import Client
+
+        gestor, _ = get_user_model().objects.get_or_create(
+            username="gestor-qa", defaults={"is_staff": True, "is_superuser": True},
+        )
+        navegador = Client()
+        navegador.force_login(gestor)
+        return navegador
+
+    def test_modelos_cobrem_as_colunas_e_telas_listam_no_schema_vigente(self):
+        from django.apps import apps
+        from django.contrib import admin
+        from django.urls import reverse
+
+        app = apps.get_app_config("webhook")
+        navegador = self.navegador_admin()
+        with connection.cursor() as cur:
+            tabelas = set(connection.introspection.table_names(cur))
+            self.assertEqual({m._meta.db_table for m in app.get_models()},
+                             {t for t in tabelas if not t.startswith(("auth_", "django_"))})
+            for modelo in app.get_models():
+                with self.subTest(modelo=modelo.__name__):
+                    campos = {c.column for c in modelo._meta.local_concrete_fields if c.column}
+                    descricao = connection.introspection.get_table_description(cur, modelo._meta.db_table)
+                    self.assertEqual(campos, {c.name for c in descricao})
+                    list(modelo.objects.all()[:1])
+                    if admin.site.is_registered(modelo):
+                        url = reverse(f"admin:webhook_{modelo._meta.model_name}_changelist")
+                        self.assertEqual(navegador.get(url).status_code, 200)
+        self.assertEqual(navegador.get(reverse("admin:webhook_centralposvenda_add")).status_code, 200)
+
+    def test_exclusao_admin_preserva_historico_e_libera_central_sem_atendimento(self):
+        from django.contrib.auth import get_user_model
+        from django.urls import reverse
+        from django.utils.timezone import now
+        from webhook.models import Chat, Cliente, ConsumoMetaColeta, MonitoramentoAcesso
+
+        central = self.salvar()
+        navegador = self.navegador_admin()
+        url = reverse("admin:webhook_centralposvenda_delete", args=(central.pk,))
+        titular = Cliente.objects.create(nome_titular="Titular de teste")
+        chat = Chat.objects.create(central=central, cliente=titular)
+        self.addCleanup(Chat.objects.filter(pk=chat.pk).delete)
+        self.publicar.reset_mock()
+        previa = navegador.get(url)
+        self.assertEqual(previa.status_code, 200)
+        self.assertIn("chat", previa.content.decode().lower())
+        self.assertTrue(self.central.objects.filter(pk=central.pk).exists())
+        self.publicar.assert_not_called()
+        chat.delete()
+        MonitoramentoAcesso.objects.create(central=central, usuario=get_user_model().objects.get(username="gestor-qa"))
+        ConsumoMetaColeta.objects.create(central=central, periodo="conta", proxima_consulta_em=now())
+        self.assertEqual(navegador.post(url, {"post": "yes"}).status_code, 302)
+        self.assertFalse(self.central.objects.filter(pk=central.pk).exists())
+        self.assertFalse(MonitoramentoAcesso.objects.filter(central=central).exists())
+        self.assertFalse(ConsumoMetaColeta.objects.filter(central=central).exists())
+        self.publicar.assert_called_once()
+
+    def test_consultas_e_permissoes_de_acesso_por_central(self):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        from django.urls import reverse
+        from webhook.models import MonitoramentoAcesso
+
+        central = self.salvar()
+        navegador = self.navegador_admin()
+        for tipo in self.admin.consultas:
+            url = reverse("admin:webhook_centralposvenda_consultar", args=(central.pk, tipo))
+            self.assertEqual(navegador.get(url).status_code, 200)
+        url = reverse("admin:webhook_centralposvenda_consultar", args=(central.pk, "acessos"))
+        operador, _ = get_user_model().objects.get_or_create(username="operador-qa")
+        leitor, _ = get_user_model().objects.get_or_create(username="leitor-qa", defaults={"is_staff": True})
+        self.assertEqual(navegador.post(url, {"acao": "vincular", "usuario": operador.pk}).status_code, 302)
+        navegador.force_login(leitor)
+        leitor.user_permissions.add(*Permission.objects.filter(content_type__app_label="webhook",
+            codename__in=("view_centralposvenda", "view_monitoramentoacesso")))
+        self.assertEqual(navegador.get(url).status_code, 200)
+        self.assertEqual(navegador.post(url, {"acao": "remover", "chave": operador.pk}).status_code, 403)
+        self.assertTrue(MonitoramentoAcesso.objects.filter(central=central, usuario=operador).exists())
+        self.assertEqual(self.navegador_admin().post(url, {"acao": "remover", "chave": operador.pk}).status_code, 302)
+        self.assertFalse(MonitoramentoAcesso.objects.filter(central=central, usuario=operador).exists())
+
+
+    def test_corrigir_telefone_confere_numero_da_meta_sem_registrar_de_novo(self):
+        from core.integrations.whatsapp.tools.validando_phone_waba import validar_phone_number_id_da_waba
+
+        obj = self.salvar()
+        self.chamadas.reset_mock()
+        self.chamadas.validar_phone_number_id_da_waba.side_effect = validar_phone_number_id_da_waba
+        self.dados["telefone"] = "+55 (11) 9999-0009"
+        resposta = Mock(status_code=200)
+        resposta.json.return_value = {"data": [{"id": "101", "display_phone_number": "+55 11 9999-0001"}]}
+        self.enterContext(patch("requests.get", return_value=resposta))
+        self.assertFalse(self.formulario(obj).is_valid())
+        obj.refresh_from_db()
+        self.assertEqual(obj.telefone, "551199990001")
+        resposta.json.return_value["data"][0]["display_phone_number"] = "+55 11 9999-0009"
+        self.salvar(obj)
+        obj.refresh_from_db()
+        self.assertEqual(obj.telefone, "551199990009")
+        self.chamadas.ativar_waba_id.assert_not_called()
+        self.chamadas.registrar_numero_whatsapp.assert_not_called()
+
+    def test_desbloqueio_por_central_exige_confirmacao_da_meta(self):
+        from django.urls import reverse
+        from webhook.models import ClienteBloqueadoMeta
+
+        central = self.salvar()
+        bloqueio = ClienteBloqueadoMeta.objects.create(central=central, wa_id_cliente="551199990005")
+        self.addCleanup(ClienteBloqueadoMeta.objects.filter(pk=bloqueio.pk).delete)
+        navegador = self.navegador_admin()
+        url = reverse("admin:webhook_centralposvenda_consultar", args=(central.pk, "bloqueios"))
+        desbloquear = self.enterContext(patch("webhook.admin_relacoes.desbloquear_usuario_meta"))
+        desbloquear.side_effect = RuntimeError("Falha simulada")
+        dados = {"acao": "desbloquear", "chave": bloqueio.wa_id_cliente}
+        self.assertEqual(navegador.post(url, dados).status_code, 302)
+        self.assertTrue(ClienteBloqueadoMeta.objects.filter(pk=bloqueio.pk).exists())
+        desbloquear.side_effect = None
+        self.assertEqual(navegador.post(url, dados).status_code, 302)
+        self.assertFalse(ClienteBloqueadoMeta.objects.filter(pk=bloqueio.pk).exists())
+        desbloquear.assert_called_with("551199990005", "101")
 ```
 
 ## 85. `deploy/testar_ubuntu.sh` (aplicar)
@@ -12933,7 +11274,8 @@ exec pg_virtualenv bash -eu -o pipefail -c '
     export META_APP_SECRET=teste DJANGO_SECRET_KEY=chave-local-de-teste DJANGO_ALLOWED_HOSTS=localhost,testserver
     "$BARATAO_PYTHON" -m unittest discover -s tests -v
     createdb baratao_admin_teste
-    DB_NAME=baratao_admin_teste PYTHONPATH="$PWD:$PWD/callback" DJANGO_SETTINGS_MODULE=callback.callback.settings \
+    cd callback
+    DB_NAME=baratao_admin_teste PYTHONPATH="$PWD:$PWD/.." DJANGO_SETTINGS_MODULE=callback.settings \
         "$BARATAO_PYTHON" -m unittest -v tests.admin_central_postgres
 '
 ```
@@ -13794,4 +12136,317 @@ def resolver_tratamento_universal(contexto):
         return repetir_etapa(contexto, enviar_repeticao_midia, contexto["destinatario_envio"],
                              entrada["id_phone_unidade"], etapa)
     return None
+```
+
+## 98. `callback/callback/settings.py`
+
+```python
+from pathlib import Path
+
+from core.config_env import env_bool, env_csv, env_int, env_optional, env_required
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+CSRF_TRUSTED_ORIGINS = env_csv("DJANGO_CSRF_TRUSTED_ORIGINS")
+CSRF_FAILURE_VIEW = 'monitoramento.views.falha_csrf'
+
+SECRET_KEY = env_required("DJANGO_SECRET_KEY")
+
+DEBUG = env_bool("DJANGO_DEBUG", False)
+
+ALLOWED_HOSTS = env_csv("DJANGO_ALLOWED_HOSTS", ["localhost", "127.0.0.1"])
+
+WEBHOOK_MAX_BODY_BYTES = env_int("WEBHOOK_MAX_BODY_BYTES", 256 * 1024)
+
+META_APP_SECRET = env_optional("META_APP_SECRET")
+META_WEBHOOK_SIGNATURE_REQUIRED = env_bool(
+    "META_WEBHOOK_SIGNATURE_REQUIRED",
+    False,
+)
+
+SECURE_SSL_REDIRECT = env_bool("DJANGO_SECURE_SSL_REDIRECT", False)
+SESSION_COOKIE_SECURE = env_bool("DJANGO_SESSION_COOKIE_SECURE", False)
+CSRF_COOKIE_SECURE = env_bool("DJANGO_CSRF_COOKIE_SECURE", False)
+SECURE_HSTS_SECONDS = env_int("DJANGO_SECURE_HSTS_SECONDS", 0)
+
+# Habilite somente quando um proxy confiavel sobrescrever X-Forwarded-Proto.
+SECURE_PROXY_SSL_HEADER = (
+    ("HTTP_X_FORWARDED_PROTO", "https")
+    if env_bool("DJANGO_TRUST_X_FORWARDED_PROTO", False)
+    else None
+)
+
+INSTALLED_APPS = [
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
+    'django.contrib.postgres',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+    'webhook',
+    'monitoramento.apps.MonitoramentoConfig',
+]
+
+# As tabelas do webhook pertencem ao DDL versionado. O Django usa os modelos
+# vigentes para criar permissões, sem manter uma segunda sequência de migrations.
+MIGRATION_MODULES = {"webhook": None}
+
+MIDDLEWARE = [
+    'django.middleware.security.SecurityMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+]
+
+ROOT_URLCONF = 'callback.urls'
+
+TEMPLATES = [
+    {
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        'DIRS': [],
+        'APP_DIRS': True,
+        'OPTIONS': {
+            'context_processors': [
+                'django.template.context_processors.request',
+                'django.contrib.auth.context_processors.auth',
+                'django.contrib.messages.context_processors.messages',
+            ],
+        },
+    },
+]
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+
+    "formatters": {
+        "verbose": {
+            "format": "%(asctime)s | %(levelname)-7s | %(name)-32s | %(filename)s:%(lineno)d | %(message)s",
+            "datefmt": "%H:%M:%S",
+        },
+    },
+
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+    },
+
+    "loggers": {
+        "django": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+}
+
+WSGI_APPLICATION = 'callback.wsgi.application'
+
+_database_options = {
+    "options": "-c search_path=chatbot",
+}
+
+_db_sslmode = env_optional("DB_SSLMODE")
+_db_sslrootcert = env_optional("DB_SSLROOTCERT")
+
+if _db_sslmode:
+    _database_options["sslmode"] = _db_sslmode
+
+if _db_sslrootcert:
+    _database_options["sslrootcert"] = _db_sslrootcert
+
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": env_required("DB_NAME"),
+        "USER": env_required("DB_USER"),
+        "PASSWORD": env_required("DB_PASSWORD"),
+        "HOST": env_required("DB_HOST"),
+        "PORT": env_int("DB_PORT", 5432),
+        "OPTIONS": _database_options,
+    }
+}
+
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+    },
+]
+
+LANGUAGE_CODE = 'en-us'
+
+TIME_ZONE = 'UTC'
+
+USE_I18N = True
+
+USE_TZ = True
+
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / "staticfiles"
+```
+
+## 99. `callback/webhook/admin_relacoes.py`
+
+```python
+"""Consultas paginadas de tabelas com chave composta, no contexto da central ou conversa."""
+import logging
+from django import forms
+from django.contrib import messages
+from django.contrib.auth import get_user_model
+from django.core.exceptions import PermissionDenied
+from django.core.paginator import Paginator
+from django.db import transaction
+from django.http import Http404, HttpResponseNotAllowed, HttpResponseRedirect
+from django.shortcuts import get_object_or_404
+from django.template.response import TemplateResponse
+from django.urls import path, reverse
+from django.utils.html import format_html_join
+
+from core.integrations.whatsapp.tools.usuarios import desbloquear_usuario_meta
+from . import models
+
+logger = logging.getLogger(__name__)
+
+
+class VincularUsuarioForm(forms.Form):
+    usuario = forms.ModelChoiceField(
+        queryset=get_user_model().objects.filter(is_active=True, is_staff=False, is_superuser=False).order_by("username"),
+        label="Usuário do painel",
+        help_text="O painel de atendimento aceita contas comuns com uma única central ativa.",
+    )
+
+
+class ConsultasRelacionadasMixin:
+    # Cada consulta tem modelo, campos de exibição e ordem estável de paginação.
+    consultas = {}
+    campo_vinculo = None
+
+    def get_urls(self):
+        return [path("<int:pk>/consultas/<slug:tipo>/", self.admin_site.admin_view(self.consultar),
+                     name=self._nome_url())] + super().get_urls()
+
+    def _nome_url(self):
+        return f"{self.opts.app_label}_{self.opts.model_name}_consultar"
+
+    def consultas_do_registro(self, obj):
+        if obj is None or obj.pk is None:
+            return "Disponíveis após o cadastro."
+        return format_html_join(" · ", '<a href="{}">{}</a>', (
+            (reverse(f"{self.admin_site.name}:{self._nome_url()}", args=(obj.pk, tipo)),
+             registro._meta.verbose_name.capitalize())
+            for tipo, (registro, _, _) in self.consultas.items()
+        ))
+
+    consultas_do_registro.short_description = "Consultas vinculadas"
+
+    def consultar(self, request, pk, tipo):
+        obj = get_object_or_404(self.get_queryset(request), pk=pk)
+        if tipo not in self.consultas:
+            raise Http404
+        modelo, campos, ordem = self.consultas[tipo]
+        if not self.has_view_permission(request, obj) or not request.user.has_perm(
+            f"webhook.view_{modelo._meta.model_name}"
+        ):
+            raise PermissionDenied
+        registros = modelo.objects.filter(**{self.campo_vinculo: obj})
+        acessos = modelo is models.MonitoramentoAcesso
+        bloqueios = modelo is models.ClienteBloqueadoMeta
+        pode_vincular = acessos and request.user.has_perm("webhook.add_monitoramentoacesso")
+        pode_remover = acessos and request.user.has_perm("webhook.delete_monitoramentoacesso")
+        pode_desbloquear = bloqueios and request.user.has_perm("webhook.delete_clientebloqueadometa")
+        form = VincularUsuarioForm() if pode_vincular else None
+
+        if request.method == "POST":
+            acao = request.POST.get("acao")
+            if acao == "vincular" and pode_vincular:
+                form = VincularUsuarioForm(request.POST)
+                if form.is_valid():
+                    with transaction.atomic():
+                        usuario = get_user_model().objects.select_for_update().get(pk=form.cleaned_data["usuario"].pk)
+                        outra_ativa = models.MonitoramentoAcesso.objects.filter(usuario=usuario, central__ativa=True).exclude(central=obj)
+                        if obj.ativa and outra_ativa.exists():
+                            form.add_error("usuario", "Remova o vínculo com a outra central ativa antes de transferir o acesso.")
+                        else:
+                            _, criado = registros.get_or_create(central=obj, usuario=usuario)
+                            messages.success(request, "Vínculo salvo." if criado else "Esse usuário já está vinculado.")
+                            return HttpResponseRedirect(request.path)
+            elif acao == "remover" and pode_remover:
+                chave = request.POST.get("chave", "")
+                if not chave.isascii() or not chave.isdecimal():
+                    raise Http404
+                usuario = get_object_or_404(registros, usuario_id=chave)
+                usuario.delete()
+                messages.success(request, "Acesso removido.")
+                return HttpResponseRedirect(request.path)
+            elif acao == "desbloquear" and pode_desbloquear:
+                with transaction.atomic():
+                    bloqueio = get_object_or_404(registros.select_for_update(), wa_id_cliente=request.POST.get("chave"))
+                    try:
+                        desbloquear_usuario_meta(bloqueio.wa_id_cliente, obj.phone_number_id)
+                    except Exception:
+                        logger.exception("admin_desbloqueio_meta_sem_confirmacao | central=%s", obj.pk)
+                        messages.error(request, "A Meta não confirmou o desbloqueio. O registro foi mantido.")
+                    else:
+                        models.Conversa.objects.filter(central=obj, status_ativa=True,
+                            chat__cliente__waid_telefone=bloqueio.wa_id_cliente).update(turnos_sem_avanco=0)
+                        bloqueio.delete()
+                        messages.success(request, "Desbloqueio confirmado pela Meta.")
+                return HttpResponseRedirect(request.path)
+            else:
+                raise PermissionDenied
+        elif request.method != "GET":
+            return HttpResponseNotAllowed(["GET", "POST"])
+
+        pagina = Paginator(registros.order_by(*ordem).values_list(*campos), 50).get_page(request.GET.get("p"))
+        return TemplateResponse(request, "admin/webhook/consultas.html", {
+            **self.admin_site.each_context(request), "opts": self.opts, "original": obj,
+            "voltar": reverse(f"{self.admin_site.name}:{self.opts.app_label}_{self.opts.model_name}_change", args=(pk,)),
+            "title": modelo._meta.verbose_name.capitalize(), "pagina": pagina,
+            "colunas": [campo.replace("__", " · ").replace("_", " ").capitalize() for campo in campos],
+            "form": form, "pode_remover": pode_remover, "pode_desbloquear": pode_desbloquear,
+        })
+```
+
+## 100. `callback/webhook/templates/admin/webhook/consultas.html`
+
+```html
+{% extends "admin/base_site.html" %}
+{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'admin:index' %}">Administração</a> &rsaquo; <a href="{{ voltar }}">{{ original }}</a> &rsaquo; {{ title }}</div>{% endblock %}
+{% block content %}
+<p>{{ original }}</p>
+{% if form %}<form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit" name="acao" value="vincular">Conceder acesso</button></form>{% endif %}
+<table>
+  <thead><tr>{% for coluna in colunas %}<th scope="col">{{ coluna }}</th>{% endfor %}{% if pode_remover or pode_desbloquear %}<th scope="col">Ação</th>{% endif %}</tr></thead>
+  <tbody>
+  {% for linha in pagina %}
+    <tr>{% for valor in linha %}<td>{{ valor|default_if_none:"—" }}</td>{% endfor %}
+    {% if pode_remover or pode_desbloquear %}<td><form method="post">{% csrf_token %}<input type="hidden" name="chave" value="{{ linha.0 }}">
+      {% if pode_remover %}<button name="acao" value="remover">Remover acesso</button>{% else %}<button name="acao" value="desbloquear">Desbloquear na Meta</button>{% endif %}
+    </form></td>{% endif %}</tr>
+  {% empty %}<tr><td colspan="12">Nenhum registro.</td></tr>{% endfor %}
+  </tbody>
+</table>
+<p>{% if pagina.has_previous %}<a href="?p={{ pagina.previous_page_number }}">Anterior</a> · {% endif %}Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}{% if pagina.has_next %} · <a href="?p={{ pagina.next_page_number }}">Próxima</a>{% endif %}</p>
+{% endblock %}
 ```

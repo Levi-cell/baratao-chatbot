@@ -13,6 +13,7 @@ O atendimento determinístico tem seis etapas de coleta e uma de encaminhamento.
 | Mensagem e sender | O texto, os rótulos e as opções pertencem a `messages`. O sender constrói o payload PyWa e devolve o WAMID e a representação que irá ao histórico. |
 | Efeitos | Após o envio confirmado, aplicar os efeitos declarados por etapa, atualizar os dados coletados e o contador na mesma transação da resposta. Um replay usa o histórico. |
 | Repositórios | As operações SQL de atendimento ficam em funções de domínio que recebem o cursor. O ciclo que abriu a transação decide o commit ou rollback. |
+| Django Admin | O ORM mapeia as tabelas de negócio com modelos `managed = False`. A estrutura pertence ao DDL SQL. O Admin valida alterações de remetente e publica o mapa de centrais no Redis após o commit. [Operações disponíveis](callback/README.md#admin-e-painel) |
 | Painel e consumo | Django controla o acesso por central. O worker de consumo consulta Pricing Analytics por período, com agenda própria e persistência da última leitura válida. |
 
 ## Cache

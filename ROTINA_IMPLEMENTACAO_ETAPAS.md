@@ -70,7 +70,7 @@ ficar artificialmente pertencendo à etapa 1.
 O validador contextual usa o contexto já carregado. Extratores puros podem
 ficar em `core/validacoes/`, sem banco, Redis, HTTP ou importação do worker.
 
-Nas etapas 1 a 6, apresentar a primeira pergunta antes de avaliar a entrada. Em seguida, um pedido textual de humano encaminha imediatamente. Para uma mídia ou entrada inválida, consultar o contador antes de repetir. Em três repetições confirmadas, a próxima entrada inválida encaminha. A resposta válida pode avançar e zerar o contador em qualquer tentativa.
+A primeira mensagem de uma nova conversa abre a etapa 1 com a saudação e a pergunta pelo nome. Nas etapas 1 a 6, avaliar cada resposta à pergunta que o cliente já recebeu. Em seguida, um pedido textual de humano encaminha imediatamente. Para uma mídia ou entrada inválida, consultar o contador antes de repetir. Em três repetições confirmadas, a próxima entrada inválida encaminha. A resposta válida pode avançar e zerar o contador em qualquer tentativa.
 
 Resposta específica inválida repete a etapa, com `tratamento=True`, sem
 evento de transição. O encaminhamento universal, apesar do nome

@@ -26,8 +26,7 @@ O worker ativa o [indicador de digitação](pywa_functions/digitacao.py) antes d
 
 ## Tools
 
-Operações Meta compartilhadas e ferramentas administrativas usadas pelo
-Django Admin e pelo webhook:
+O cadastro no Admin valida o telefone, assina a conta e registra o remetente. A suspensão e a exclusão da central têm efeito local. A pasta também oferece operações administrativas independentes do cadastro:
 
 - registrar/desregistrar número;
 - validar o vínculo entre WABA e phone ID;
@@ -60,8 +59,7 @@ aplicada ao cliente PyWa e a todas as URLs diretas da Graph API. Se uma versão
 nova apresentar incompatibilidade, a variável pode retornar manualmente para a
 última versão estável validada.
 
-Não adicione token ou outro valor sensível diretamente nesse arquivo. WABA ID e
-phone number ID são dados por unidade e devem vir do banco/cache.
+Não adicione token ou outro valor sensível diretamente nesse arquivo. WABA ID, Phone Number ID e o WAAC quando disponível pertencem à central de pós-venda. O PostgreSQL mantém o cadastro do remetente e o Redis acelera a consulta das centrais ativas.
 `META_PHONE_REGISTRATION_PIN` também é segredo operacional e só é necessário
 para a operação administrativa de registro do número; não deve ser exibido em
 logs, documentação ou mensagens.

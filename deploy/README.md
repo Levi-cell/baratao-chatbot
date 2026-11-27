@@ -91,6 +91,8 @@ em um valor enviado diretamente pelo cliente.
 
 ## Banco existente
 
+O RDS de produção foi conferido na Beta V0.2.1 em 27/11/2026. O catálogo tem 7 etapas e 21 transições. Os procedimentos abaixo servem a bases em estados anteriores. Identifique a origem antes de escolher o script. [Estado do banco e histórico](../core/database/README.md#catálogo-de-produção)
+
 Para o banco que já concluiu a migração das nove etapas com WAAC e BSUID, pause os serviços da aplicação e execute o [SQL das sete etapas](migrations/20261126_baratao_sete_etapas.sql) no DBeaver. A conferência retorna 7 etapas, 28 transições e 90 dias de bloqueio na etapa final. Em seguida, aplicar o [SQL de recoleta](migrations/20261126_recoleta_titular.sql), que retira o atalho para produto e deixa 27 transições. Na Beta V0.2.0, o [SQL de repetição por mídia](migrations/20261127_midia_repete_etapa.sql) remove as seis arestas de mídia e confere as 21 transições. O script pode ser reaplicado na base de sete etapas. O código e o catálogo devem corresponder à mesma versão. Para outra versão de origem, consulte o [histórico das migrações](../core/database/README.md).
 
 Os procedimentos de ambiente e acesso ao banco estão no [guia de configuração](../regras_deploy/modificando_env_e_banco_em_prod.md).

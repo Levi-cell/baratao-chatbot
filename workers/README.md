@@ -17,7 +17,7 @@ Antes de enviar, o worker renova o lock e verifica novamente a central. O [despa
 
 O vínculo `fila_mensagens.id_conversa` é uma anotação de integridade e
 ordenação; ele não é o lock de turno e não substitui a resolução atual por
-`(cliente, unidade)`.
+`(cliente, central)`.
 
 O repositório preenche o vínculo quando ele está vazio ou já aponta para a mesma
 conversa. Um vínculo legado divergente só é reparado quando a fila ainda não tem
@@ -33,7 +33,7 @@ o bloqueio já expirou.
 
 As barreiras que continuam decidindo o atendimento são:
 
-- advisory lock do turno por cliente e unidade no webhook;
+- advisory lock do turno por cliente e central no webhook;
 - lock versionado da conversa no worker;
 - verificação de mensagem anterior ainda aberta;
 - `resposta_bot_para_mensagem_atual`, que impede novo envio em um retry.

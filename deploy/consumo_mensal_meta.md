@@ -1,6 +1,6 @@
 # Consumo Meta no pós-venda Baratão
 
-Atualizado em 22/11/2026. O worker, os repositórios, a seção Consumo e os PDFs usam `central_pos_venda` e `id_central`. As outras abas do painel e o fluxo completo do varejo têm entregas próprias; esta adaptação não declara o projeto inteiro pronto para produção.
+Na Beta V0.2.1, o worker de consumo está implantado na VM Ubuntu. A coleta, a seção Consumo e os PDFs usam `central_pos_venda` e `id_central`. A adaptação das outras métricas do painel segue em andamento.
 
 ## O que permanece
 
@@ -12,7 +12,7 @@ Atualizado em 22/11/2026. O worker, os repositórios, a seção Consumo e os PDF
 
 Esta decisão substitui a orientação anterior de remover a cobertura ESL do varejo. A política da Meta é uma dependência externa e deve continuar sendo conferida em [preços oficiais](https://developers.facebook.com/docs/whatsapp/pricing/) e na [referência de analytics](https://developers.facebook.com/docs/graph-api/reference/whats-app-business-account/pricing_analytics/).
 
-## Banco já convertido para varejo
+## Migração de 22/11 para bases anteriores ao detalhamento do consumo
 
 1. Manter o `chatbot-worker-consumo-meta.service` parado durante a atualização. Usar o procedimento normal de backup e troca de código do ambiente.
 2. Executar **inteiro**, com BEGIN/COMMIT, [20261122_consumo_meta_varejo.sql](migrations/20261122_consumo_meta_varejo.sql). Não executar a migração original de 20260929, que usa `unidade`, nem reaplicar a virada de 20261116. Em falha, fazer ROLLBACK e resolver a causa. A migração usa o mesmo advisory lock do coletor e expira se houver uma coleta concorrente.
@@ -35,7 +35,7 @@ CONSUMO_META_HORA_CONFERENCIA=9
 
 Sem `CONSUMO_META_ENABLED=True`, o iniciador termina sem acessar a Meta. O módulo permanece `python -m workers.worker_consumo_meta.iniciar_worker_consumo_meta`. O serviço continua em [chatbot-worker-consumo-meta.service](systemd/chatbot-worker-consumo-meta.service).
 
-Após o deploy e a migração do ambiente, validar Django e executar collectstatic com o ambiente da aplicação. Instalar/recarregar o serviço se necessário e iniciar somente o coletor autorizado. Esta entrega local não liga serviços nem executa a migração na VM.
+Na instalação ou atualização do coletor, validar o Django no ambiente da aplicação. Atualizar os estáticos se houver mudança na interface e recarregar o systemd se o arquivo de serviço mudar. A coleta roda separada do webhook e do worker de atendimento.
 
 Para conferir um coletor já implantado:
 
