@@ -2,6 +2,14 @@
 
 O banco continua sendo `db_chatbot` e os objetos da aplicação continuam no schema `chatbot`. A estrutura de negócio pertence ao SQL versionado. O Django administra suas tabelas de usuários, permissões e sessões. A configuração da conexão permanece em `connection_aws.py`.
 
+## Banco e Django Admin na beta V0.2.1
+
+Uma instalação limpa usa `schema.sql` com as declarações `CREATE` finais e `catalogo.sql` com sete etapas e 21 transições. Ao migrar uma base existente, atualize também esses arquivos quando a estrutura ou os dados iniciais mudarem. A retirada das seis saídas por mídia mudou apenas o catálogo. As funções PostgreSQL `dequeue_message()`, `lock_conversa(integer)` e `unlock_conversa(integer, integer)` continuam no DDL. A versão V0.2.1 atualiza o mapeamento Django e as permissões do Admin. O deploy executa `manage.py migrate` para cadastrar essas permissões.
+
+Em **Administração → Centrais de pós-venda**, o cadastro valida o remetente na Meta. A central concentra as configurações do agente, os dois telefones de encaminhamento e as consultas de acessos, bloqueios, identidades e consumo. Alterações confirmadas no PostgreSQL atualizam a versão do cache e disparam a publicação no Redis após o commit. Em **Conversas**, abra uma conversa para consultar seus pedidos, etiquetas e recuperações de contato. Fila, histórico, etapas e transições são telas de consulta.
+
+Ao excluir uma central, a confirmação mostra os vínculos afetados. A exclusão de uma central sem histórico remove também os vínculos de acesso e sua agenda de coletas. Chats, mensagens, identidades, bloqueios e consumo registrado protegem a central contra exclusão. Para interromper o atendimento preservando esses registros, desmarque **Ativa**. A exclusão local mantém o registro do número na plataforma Meta.
+
 ## Catálogo de produção
 
 A base que concluiu a migração de nove etapas com WAAC e BSUID recebe o [SQL incremental das sete etapas](../../deploy/migrations/20261126_baratao_sete_etapas.sql). Com a aplicação parada, executar o arquivo completo no DBeaver. A consulta final retorna IDs de 1 a 7, 28 transições, detalhes (6), encaminhamento (7) e 90 dias.

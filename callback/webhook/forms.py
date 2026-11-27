@@ -1,6 +1,7 @@
 """Validação e provisionamento do remetente no cadastro de centrais."""
 
 import logging
+import re
 
 from django import forms
 from requests.exceptions import RequestException
@@ -25,12 +26,20 @@ class CentralPosVendaForm(forms.ModelForm):
         model = CentralPosVenda
         fields = "__all__"
 
+    def clean_telefone(self):
+        valor = self.cleaned_data["telefone"]
+        digitos = re.sub(r"[+ ().-]", "", valor)
+        if not re.fullmatch(r"[1-9][0-9]{7,14}", digitos):
+            raise forms.ValidationError("Informe o telefone da central com o código do país e DDD.")
+        return digitos
+
     def _post_clean(self):
         super()._post_clean()
         # A validação do modelo e a de unicidade já terminaram. Edições de
         # atendimento (inclusive suspender a central) dispensam provisionamento.
         mudou_remetente = {"waba_id", "phone_number_id", "waac_id"}.intersection(self.changed_data)
-        if self.errors or not (self.instance._state.adding or mudou_remetente):
+        provisionar = self.instance._state.adding or bool(mudou_remetente)
+        if self.errors or not (provisionar or "telefone" in self.changed_data):
             return
 
         central = self.instance
@@ -42,10 +51,12 @@ class CentralPosVendaForm(forms.ModelForm):
 
         try:
             vinculo = validar_phone_number_id_da_waba(
-                central.waba_id, central.phone_number_id, waac_id=central.waac_id,
+                central.waba_id, central.phone_number_id, waac_id=central.waac_id, telefone=central.telefone,
             )
             if not _meta_confirmou(vinculo):
-                self.add_error(None, "A Meta não confirmou o vínculo entre os identificadores desta central.")
+                self.add_error(None, "A Meta não confirmou o telefone e os identificadores do remetente desta central.")
+                return
+            if not provisionar:
                 return
             if not _meta_confirmou(ativar_waba_id(central.waba_id)):
                 self.add_error("waba_id", "A Meta não confirmou a assinatura da conta para receber webhooks.")

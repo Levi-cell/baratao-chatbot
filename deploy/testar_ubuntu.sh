@@ -18,6 +18,7 @@ exec pg_virtualenv bash -eu -o pipefail -c '
     export META_APP_SECRET=teste DJANGO_SECRET_KEY=chave-local-de-teste DJANGO_ALLOWED_HOSTS=localhost,testserver
     "$BARATAO_PYTHON" -m unittest discover -s tests -v
     createdb baratao_admin_teste
-    DB_NAME=baratao_admin_teste PYTHONPATH="$PWD:$PWD/callback" DJANGO_SETTINGS_MODULE=callback.callback.settings \
+    cd callback
+    DB_NAME=baratao_admin_teste PYTHONPATH="$PWD:$PWD/.." DJANGO_SETTINGS_MODULE=callback.settings \
         "$BARATAO_PYTHON" -m unittest -v tests.admin_central_postgres
 '

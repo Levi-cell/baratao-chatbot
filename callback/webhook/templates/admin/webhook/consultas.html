@@ -1,0 +1,18 @@
+{% extends "admin/base_site.html" %}
+{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'admin:index' %}">Administração</a> &rsaquo; <a href="{{ voltar }}">{{ original }}</a> &rsaquo; {{ title }}</div>{% endblock %}
+{% block content %}
+<p>{{ original }}</p>
+{% if form %}<form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit" name="acao" value="vincular">Conceder acesso</button></form>{% endif %}
+<table>
+  <thead><tr>{% for coluna in colunas %}<th scope="col">{{ coluna }}</th>{% endfor %}{% if pode_remover or pode_desbloquear %}<th scope="col">Ação</th>{% endif %}</tr></thead>
+  <tbody>
+  {% for linha in pagina %}
+    <tr>{% for valor in linha %}<td>{{ valor|default_if_none:"—" }}</td>{% endfor %}
+    {% if pode_remover or pode_desbloquear %}<td><form method="post">{% csrf_token %}<input type="hidden" name="chave" value="{{ linha.0 }}">
+      {% if pode_remover %}<button name="acao" value="remover">Remover acesso</button>{% else %}<button name="acao" value="desbloquear">Desbloquear na Meta</button>{% endif %}
+    </form></td>{% endif %}</tr>
+  {% empty %}<tr><td colspan="12">Nenhum registro.</td></tr>{% endfor %}
+  </tbody>
+</table>
+<p>{% if pagina.has_previous %}<a href="?p={{ pagina.previous_page_number }}">Anterior</a> · {% endif %}Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}{% if pagina.has_next %} · <a href="?p={{ pagina.next_page_number }}">Próxima</a>{% endif %}</p>
+{% endblock %}

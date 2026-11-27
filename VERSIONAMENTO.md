@@ -16,6 +16,10 @@ Commit: `68528d883bc72dacbc61d950df0790c573f622c9`
 
 ### Beta V0.2.0 — Repete perguntas por mídia e preserva o atendimento
 
+Commit: `16779d6699d6f45a141c127cda8f84cef7269e00`
+
+### Beta V0.2.1 — Alinha painel administrativo ao banco e protege centrais
+
 Commit: PENDENTE
 
 ## Padrão de numeração

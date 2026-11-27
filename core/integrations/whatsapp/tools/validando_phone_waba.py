@@ -14,7 +14,7 @@ from core.logging_config import short_value
 logger = logging.getLogger("whatsapp.waba")
 
 
-def validar_phone_number_id_da_waba(waba_id, phone_number_id, *, waac_id=None):
+def validar_phone_number_id_da_waba(waba_id, phone_number_id, *, waac_id=None, telefone=None):
     """Confirma na Graph API que o phone ID pertence à WABA informada."""
     waba_id = str(waba_id or "").strip()
     phone_number_id = str(phone_number_id or "").strip()
@@ -30,7 +30,7 @@ def validar_phone_number_id_da_waba(waba_id, phone_number_id, *, waac_id=None):
         "Authorization": f"Bearer {get_token_usuario_meta()}",
     }
     params = {
-        "fields": "id,display_phone_number" if waac_id else "id",
+        "fields": "id,display_phone_number" if waac_id or telefone else "id",
         "limit": 100,
     }
     paginas_consultadas = 0
@@ -84,6 +84,9 @@ def validar_phone_number_id_da_waba(waba_id, phone_number_id, *, waac_id=None):
         for numero in numeros:
             if not isinstance(numero, dict) or str(numero.get("id")) != phone_number_id:
                 continue
+            telefone_waba = re.sub(r"\D", "", str(numero.get("display_phone_number") or ""))
+            if telefone and telefone_waba != re.sub(r"\D", "", telefone):
+                return response.status_code, {"success": False, "reason": "telefone_divergente"}
             if waac_id:
                 # Antes de registrar um recurso diferente, exija da Meta o mesmo
                 # telefone do recurso listado na WABA. Uma resposta sem número é inconclusiva.
@@ -91,7 +94,6 @@ def validar_phone_number_id_da_waba(waba_id, phone_number_id, *, waac_id=None):
                     construir_url_graph_api(waac_id), headers=headers,
                     params={"fields": "display_phone_number"}, timeout=get_meta_http_timeout(),
                 )
-                telefone_waba = re.sub(r"\D", "", str(numero.get("display_phone_number") or ""))
                 telefone_waac = _normalizar_resposta(consulta).get("display_phone_number")
                 if (not consulta.ok or not telefone_waba
                         or telefone_waba != re.sub(r"\D", "", str(telefone_waac or ""))):
