@@ -2,6 +2,10 @@
 
 O webhook serve a API, o Admin e o painel. O worker de fluxo processa o atendimento de sete etapas. O worker de consumo atualiza os dados de cobrança da Meta.
 
+## Itens das notas na Beta V0.6.0
+
+Sobre a V0.5.0, execute uma vez o [script completo de migração](migrations/20261127_nota_produtos.sql) no banco da aplicação. A transação atribui um ID às notas existentes e cria a tabela de itens vazia. A unicidade por conversa e número continua permitindo a repetição segura dos envios do worker. Instalações novas recebem a estrutura final pelo `schema.sql`.
+
 ## Catálogo de produtos na Beta V0.5.0
 
 Ao atualizar uma base V0.4.0, execute na raiz da revisão V0.5.0, com o ambiente do PostgreSQL carregado:

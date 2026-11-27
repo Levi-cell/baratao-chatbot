@@ -2,7 +2,7 @@
 from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError
-from django.core.validators import RegexValidator
+from django.core.validators import MinValueValidator, RegexValidator
 from django.db import models
 from django.db.models.functions import Right
 
@@ -199,7 +199,7 @@ class FilialCompra(models.Model):
 
 
 class PedidoConversa(models.Model):
-    pk = models.CompositePrimaryKey("conversa", "numero")
+    id_nota = models.BigAutoField(primary_key=True)
     conversa = models.ForeignKey(Conversa, models.PROTECT, db_column="id_conversa")
     numero = models.TextField()
     codigo_filial = models.GeneratedField(expression=Right("numero", 2), output_field=models.TextField(), db_persist=True)
@@ -207,7 +207,20 @@ class PedidoConversa(models.Model):
     class Meta:
         managed = False
         db_table = "pedido_conversa"
+        unique_together = (("conversa", "numero"),)
         verbose_name = "pedido da conversa"
+
+
+class NotaProduto(models.Model):
+    pk = models.CompositePrimaryKey("nota", "produto")
+    nota = models.ForeignKey(PedidoConversa, models.PROTECT, db_column="id_nota")
+    produto = models.ForeignKey(ProdutoCatalogo, models.PROTECT, db_column="codigo_produto")
+    qtd = models.IntegerField("quantidade", default=1, validators=[MinValueValidator(1)])
+
+    class Meta:
+        managed = False
+        db_table = "nota_produtos"
+        verbose_name = "produto da nota"
 
 
 class EtiquetaConversa(models.Model):

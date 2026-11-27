@@ -2,9 +2,13 @@
 
 O banco continua sendo `db_chatbot` e os objetos da aplicação continuam no schema `chatbot`. A estrutura de negócio pertence ao SQL versionado. O Django administra suas tabelas de usuários, permissões e sessões. A configuração da conexão permanece em `connection_aws.py`.
 
+## Produtos por nota (Beta V0.6.0)
+
+Cada linha de `pedido_conversa` tem um ID de nota estável e mantém a unicidade de conversa e número. A tabela `nota_produtos` registra um código do catálogo e uma quantidade inteira positiva por nota. Um índice pelo código permite localizar as notas de determinado produto. A etapa de pedidos continua registrando apenas o número e a filial. [Desenho do Controle](../../CONTROLE_POS_VENDA.md)
+
 ## Catálogo de produtos (Beta V0.5.0)
 
-A tabela independente `chatbot.catalogo` contém um produto por código do ERP Objetivo. O [TXT na raiz](../../catalogo_produtos.txt) usa UTF-8, tem cabeçalho e separa `codigo_produto`, `nome_produto` e `categoria` por tabulações. Uma variação com código próprio ocupa uma linha, inclusive quando esgotada.
+A tabela `chatbot.catalogo` contém um produto por código do ERP Objetivo. O [TXT na raiz](../../catalogo_produtos.txt) usa UTF-8, tem cabeçalho e separa `codigo_produto`, `nome_produto` e `categoria` por tabulações. Uma variação com código próprio ocupa uma linha, inclusive quando esgotada.
 
 A carga inicial reúne 7.974 códigos. A categoria `estofado` (2.916) abrange sofás, poltronas, pufes, colchões, camas box e acessórios estofados. A categoria `moveis` (5.058) inclui camas de estrutura rígida, armários, mesas e, por convenção comercial, eletrodomésticos e itens diversos. Produtos de mostruário seguem o tipo da peça. O encaminhamento do Theo continua usando a rede da filial da nota. O catálogo fica disponível para uso futuro pelo painel.
 

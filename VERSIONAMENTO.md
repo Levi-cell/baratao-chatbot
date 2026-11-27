@@ -32,6 +32,10 @@ Commit: `f8234a2bdccaed2babd8b5f4727610a851ea632b`
 
 ### Beta V0.5.0 — Cadastra produtos por código, nome e categoria
 
+Commit: `89a72ec3e55b9c11bcd575eb7167ccb46807a6fb`
+
+### Beta V0.6.0 — Vincula produtos e quantidades às notas dos atendimentos
+
 Commit: PENDENTE
 
 ## Padrão de numeração
