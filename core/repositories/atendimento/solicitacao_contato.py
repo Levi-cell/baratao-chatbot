@@ -26,7 +26,7 @@ def repetir_solicitacao(conversa, uid, wamid, cursor):
 
 def pendencia_ativa(central,cliente,uid,cursor):
     cursor.execute("""
-        SELECT s.wamids_aceitos FROM chatbot.solicitacao_contato s
+        SELECT s.wamids_aceitos, s.motivo FROM chatbot.solicitacao_contato s
         JOIN chatbot.conversa c USING(id_conversa) JOIN chatbot.chat ch USING(id_chat)
         WHERE c.status_ativa AND c.id_central=%s AND ch.id_cliente=%s AND s.bsuid_destino=%s
         FOR UPDATE OF s

@@ -4,6 +4,7 @@ O ciclo transacional permanece no flow_worker. Este módulo coordena chamadas
 aos repositórios; não executa SQL, commit, rollback, HTTP ou escrita em cache.
 """
 
+from core.identidade_atendimento import conciliar_apos_cpf
 from core.etapas_pos_venda import (
     ETAPA_NOME, ETAPA_CPF, ETAPA_PRODUTO, ETAPA_ASSUNTO, EVENTO_PRODUTO_ESCOLHIDO,
     ETAPA_PEDIDOS, ETAPA_DETALHES, EVENTO_SITUACAO_INFORMADA, EVENTO_ASSUNTO_ESCOLHIDO,
@@ -109,9 +110,14 @@ def atualizar_banco_conforme_transicao_de_etapa(contexto, envio, cursor):
             cpf = envio["cpf_titular"]
             if len(cpf) != 11 or not cpf.isascii() or not cpf.isdigit():
                 raise ValueError("O efeito de CPF exige 11 dígitos ASCII já normalizados.")
-            atualizar_cpf_titular(contexto["id_cliente"], cpf, cursor)
+            resultado = conciliar_apos_cpf(contexto, cpf, cursor)
+            if resultado.cadastro_para_cpf is not None:
+                atualizar_cpf_titular(resultado.cadastro_para_cpf, cpf, cursor)
             atualizar_cpf_do_atendimento(contexto["id_conversa"], cpf, cursor)
-            return {"cpf_titular": cpf}
+            efeito = {"cpf_titular": cpf}
+            if resultado.cache:
+                efeito["cache_conciliacao"] = resultado.cache
+            return efeito
 
     # PRODUTO (3): pertence ao atendimento atual, nunca ao cadastro global.
     elif etapa == ETAPA_PRODUTO:
@@ -199,13 +205,19 @@ def aplicar_efeito_contato(ctx,envio,cursor):
     elif operacao == "repetir":
         repositorio.repetir_solicitacao(conversa,uid,envio["id_hash_msg_bot"],cursor)
     elif operacao == "confirmar":
-        if not repositorio.ler_solicitacao_para_confirmar(conversa,uid,cursor):
+        solicitacao = repositorio.ler_solicitacao_para_confirmar(conversa, uid, cursor)
+        if not solicitacao:
             raise ValueError("Solicitação já encerrada")
         telefone = envio["telefone_provado"]
         ident.serializar_chave(f"wa:{telefone}",cursor)
-        if ident.cliente_telefone(telefone,cursor) not in (None,ctx["id_cliente"]):
-            raise ValueError("Conciliação de cadastros necessária")
-        ident.definir_telefone(ctx["id_cliente"],telefone,cursor)
+        dono = ident.cliente_telefone(telefone, cursor)
+        if envio.get("telefone_em_outro_cadastro") or dono not in (None, ctx["id_cliente"]):
+            if solicitacao[1] != "cadastro":
+                raise ValueError("O telefone de reconfirmação pertence a outro cadastro.")
+            from core.repositories.atendimento.conciliacao_cliente import guardar_telefone_compartilhado
+            guardar_telefone_compartilhado(conversa, telefone, cursor)
+        else:
+            ident.definir_telefone(ctx["id_cliente"], telefone, cursor)
         ident.alias_confirmado(ctx["id_central"],uid,cursor)
         repositorio.encerrar_solicitacao(conversa,cursor)
     elif operacao=="encerrar":

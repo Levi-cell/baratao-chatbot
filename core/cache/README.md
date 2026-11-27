@@ -51,10 +51,10 @@ em memória descrito abaixo não é um servidor Redis local.
 
 O webhook resolve a identidade no PostgreSQL e associa o cliente à entrada da
 fila. O worker usa esse ID. Para uma entrada antiga sem ID, consulta o cache
-do telefone; em caso de ausência ou valor inválido, resolve o cliente no banco.
+do telefone e confirma o vínculo atual no banco. Uma troca de titular pode deixar uma chave antiga apontando para um ID que ainda existe.
 Após o commit publica o vínculo no Redis por 180 dias. A chave de telefone é
 global; a chave de BSUID inclui a central. A conciliação de identidades ocorre
-no banco. Se um ID obsoleto causar a violação `chat_id_cliente_fkey`, o worker
+no banco. Após uma fusão, o worker invalida telefones e aliases antigos e publica a rota atual. Se um ID obsoleto causar a violação `chat_id_cliente_fkey`, o worker
 tenta remover a chave do telefone após o rollback para a próxima tentativa.
 
 ## Central de pós-venda

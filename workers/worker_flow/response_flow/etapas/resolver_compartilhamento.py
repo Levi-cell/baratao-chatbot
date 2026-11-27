@@ -57,18 +57,21 @@ def resolver_turno_contato(ctx):
         if not ctx.get("telefone_compartilhado_apto") or ctx["telefone_compartilhado_apto"] != prova:
             raise ValueError("Prova conflitante ou sem autorização no ingresso")
         phone = ctx["central"]["phone_number_id"]
+        em_outro_cadastro = bool(entrada["estrutura_compartilhamento"].get("_telefone_em_outro_cadastro"))
+        destinatario = uid if em_outro_cadastro else prova
         if etapa == ETAPA_CPF:
             texto = montar_mensagem_etapa2(nome, contato_confirmado=True)
-            envio = enviar_texto_pos_venda(prova, phone, texto, etapa)
+            envio = enviar_texto_pos_venda(destinatario, phone, texto, etapa)
         else:
             senders = {ETAPA_NOME: enviar_etapa1, ETAPA_PRODUTO: enviar_etapa3,
                        ETAPA_ASSUNTO: enviar_etapa4, ETAPA_PEDIDOS: enviar_etapa5_pedidos,
                         ETAPA_DETALHES: enviar_etapa6_detalhes}
             from core.integrations.whatsapp.pywa_functions.cliente import usar_prefixo_mensagem_bot
             with usar_prefixo_mensagem_bot("Obrigado por compartilhar seu contato!"):
-                envio = senders[etapa](prova, phone)
+                envio = senders[etapa](destinatario, phone)
         return dict(envio, operacao_contato="confirmar", bsuid_contato=uid, telefone_provado=prova,
-                    tipo_destinatario="wa_id", valor_destinatario=prova)
+                    telefone_em_outro_cadastro=em_outro_cadastro,
+                    tipo_destinatario="bsuid" if em_outro_cadastro else "wa_id", valor_destinatario=destinatario)
     if acao in {"repetir_botao", "repetir_por_midia"}:
         return pedir(ctx, etapa, nome, repetir=True, midia=acao == "repetir_por_midia")
     destino = resolver_destino_transicao(ctx, acao, destinos_esperados={ETAPA_ENCAMINHAMENTO})

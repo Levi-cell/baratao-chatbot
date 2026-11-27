@@ -32,6 +32,8 @@ CREATE TABLE chatbot.cliente (
     cidade_loja_compra text CHECK (cidade_loja_compra ~ '[^[:space:]]')
 );
 
+CREATE INDEX cliente_cpf_conciliacao ON chatbot.cliente (cpf_titular, id_cliente) WHERE cpf_titular IS NOT NULL;
+
 CREATE FUNCTION chatbot.preservar_cidade_loja_compra() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     RAISE EXCEPTION 'A cidade da loja já foi registrada para este cliente.'
@@ -115,6 +117,7 @@ CREATE TABLE chatbot.atendimento_pos_venda (
     detalhes text CHECK (btrim(detalhes) <> ''),
     encaminhado_moveis varchar CHECK (encaminhado_moveis ~ '^[1-9][0-9]{7,14}$'),
     encaminhado_sofas varchar CHECK (encaminhado_sofas ~ '^[1-9][0-9]{7,14}$'),
+    telefone_compartilhado varchar CHECK (telefone_compartilhado ~ '^[1-9][0-9]{0,14}$'),
     CHECK (encaminhado_moveis <> encaminhado_sofas),
     CHECK (CASE coalesce(produto, 'ambos')
         WHEN 'moveis' THEN encaminhado_sofas IS NULL

@@ -2,7 +2,7 @@
 
 A central atende clientes das lojas Baratão e Atacadão. Um chat reúne um cliente e a central de pós-venda. Cada nova conversa começa pelo nome do titular e coleta novamente o CPF. O titular pode ser diferente de quem escreve. A filial de compra vem do sufixo da nota.
 
-**Beta V0.2.1.** Sete etapas e 21 transições. [Fluxograma do atendimento](docs/fluxograma_atendimento.md) · [Fluxograma da arquitetura](docs/fluxograma_arquitetura.md)
+**Beta V0.3.0.** Sete etapas e 21 transições. [Fluxograma do atendimento](docs/fluxograma_atendimento.md) · [Fluxograma da arquitetura](docs/fluxograma_arquitetura.md)
 
 ## Roteiro do cliente
 
@@ -11,7 +11,7 @@ A cada entrada, localizar o chat do cliente com a central e retomar a conversa a
 | Passo | O que o cliente recebe | Resposta e efeito |
 | --- | --- | --- |
 | 1 · Nome | “Boa tarde, eu sou o Theo, assistente do pós-venda do Baratão e Atacadão! 😁<br><br>Olha antes de começarmos peço que envie somente mensagens de texto!  Caso você não seja o titular da compra, recomendamos que direcione esse atendimento para o titular, caso foi você que fez a compra ignore este aviso.<br><br>Antes de te encaminhar para um atendimento humano, preciso coletar algumas informações suas tá ? vai levar apenas alguns minutos, para começar, me informe o nome completo do titular da compra.” A saudação acompanha o horário. | Guardar o nome completo validado. Não interpretar a entrada que disparou a apresentação como resposta ao nome. |
-| 2 · CPF | Com telefone disponível, “Certo Carlos. Em uma única mensagem, me informe o CPF do titular da compra.” Após compartilhar o contato, “Obrigado por compartilhar seu contato Ana! Em uma única mensagem, me informe o CPF do titular da compra.” Usar o primeiro nome do titular. | Extrair um CPF com 11 dígitos, guardando apenas os números no cadastro e no atendimento. |
+| 2 · CPF | Com telefone disponível, “Certo Carlos. Em uma única mensagem, me informe o CPF do titular da compra.” Após compartilhar o contato, “Obrigado por compartilhar seu contato Ana! Em uma única mensagem, me informe o CPF do titular da compra.” Usar o primeiro nome do titular. | Extrair os 11 dígitos e guardar o CPF declarado no atendimento. Na V0.3.0, a [conciliação do cadastro](docs/conciliacao_cliente_por_cpf.md) escolhe o ID definitivo e reúne o histórico por central. |
 | 3 · Produto | “Sobre qual tipo de produto você quer falar?” | Botões **Apenas Estofados**, **Apenas Móveis** e **Estofados e Móveis**; rodapé **Selecione apenas uma opção abaixo.** Etiquetas **Estofados**, **Móveis** e **Ambos**. |
 | 4 · Assunto | “Certo, sobre qual assunto você quer falar? Selecione apenas uma opção.” | Registrar o assunto na conversa e avançar para a etapa 5. |
 | 5 · Pedidos | “Me informe o número do pedido que aparece na sua nota.” | Extrair os números válidos ou aceitar **Perdi a nota**, por botão ou texto. |

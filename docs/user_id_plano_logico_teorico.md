@@ -1,6 +1,6 @@
 # Identidade do cliente no WhatsApp do Baratão
 
-**Estado na Beta V0.2.1.** O webhook e a fila reconhecem entradas com telefone ou BSUID utilizável. A produção já tem as tabelas de identidade e o catálogo de sete etapas. O plano prático reproduz os arquivos dessa versão. A homologação da rota WAAC real depende de a Meta disponibilizar o identificador e as permissões para a central. [Implementação](user_id_plano_logico_pratico.md) · [Histórico do banco](../core/database/README.md#catálogo-de-produção) · [Cronograma da plataforma](../CRONOGRAMA_META_2027_2028.md)
+**Beta V0.3.0.** O webhook e a fila reconhecem entradas com telefone ou BSUID utilizável. A produção já tem as tabelas de identidade e o catálogo de sete etapas. A conciliação acontece no efeito da etapa de CPF. A atualização da V0.2.1 requer a [migração do telefone compartilhado](../deploy/migrations/20261127_contato_conferencia_cpf.sql) antes da atualização dos serviços. A homologação da rota WAAC real depende de a Meta disponibilizar o identificador e as permissões para a central. [Implementação](user_id_plano_logico_pratico.md) · [Histórico do banco](../core/database/README.md#catálogo-de-produção) · [Cronograma da plataforma](../CRONOGRAMA_META_2027_2028.md)
 
 ## Qual identificador usar
 
@@ -13,15 +13,23 @@
 | Falha definitiva específica do destinatário telefônico, com BSUID comprovado e vigente | Pedir reconfirmação pelo BSUID uma vez. Suspender o envio ao telefone anterior enquanto a confirmação estiver pendente. Conservar etapa, assunto, pedidos e histórico. |
 | Username presente em evento autenticado | Guardar o último valor observado no cadastro global do cliente, com o instante da observação. Uma reentrega antiga ou um campo omitido não apaga nem reverte um valor mais recente. |
 
-O BSUID é texto opaco. A Meta o vincula ao negócio e pode regenerá-lo quando o cliente muda de número. Isolar vínculos por central enquanto o escopo empresarial comum não estiver verificado. Tratar os eventos oficiais `user_changed_number` e `user_changed_user_id` com validação do vínculo anterior antes de aceitar o novo. Nome, CPF, nota e username não autorizam fusão. O username pode aparecer em `contacts[].profile.username`; o estado armazenado significa “último observado”. [Identificadores e mudanças de número na Meta](https://developers.facebook.com/documentation/business-messaging/whatsapp/business-scoped-user-ids)
+O BSUID é texto opaco. A Meta o vincula ao negócio e pode regenerá-lo quando o cliente muda de número. Isolar vínculos por central enquanto o escopo empresarial comum não estiver verificado. Tratar os eventos oficiais `user_changed_number` e `user_changed_user_id` com validação do vínculo anterior antes de aceitar o novo. Nome, CPF, nota e username, considerados isoladamente, não autorizam a fusão. O username pode aparecer em `contacts[].profile.username`; o estado armazenado significa “último observado”. [Identificadores e mudanças de número na Meta](https://developers.facebook.com/documentation/business-messaging/whatsapp/business-scoped-user-ids)
 
 ## Conciliação do cliente provisório
 
 Uma resposta oficial ao botão pode revelar um número já cadastrado. O telefone identifica o contato do WhatsApp; o titular desta compra é declarado novamente. O webhook exige assinatura validada, a solicitação em aberto da mesma central, o BSUID e a prova de compartilhamento. Confere o WAMID de contexto quando presente. O telefone do envelope, quando presente, deve coincidir com o do cartão.
 
-Após o bloqueio vencer, se a ficha provisória representa apenas o atendimento em curso e o cadastro do telefone não tem atendimento concorrente nem BSUID vigente conflitante na central, o webhook conserva o ID antigo do cliente. Move a conversa para o chat canônico, reassocia a fila e o alias e remove a ficha provisória na transação da entrada. O histórico, o ID da conversa, o contador e a solicitação de contato continuam os mesmos. O worker envia a pergunta do CPF usando o primeiro nome recém-informado. O cadastro global recebe os dados desta compra; as conversas encerradas conservam seus próprios dados.
+Na V0.2.1 o webhook podia unir os registros no turno do cartão. Na V0.3.0, o cartão oficial comprova o telefone do remetente. O CPF declarado é o do titular da compra. Uma pessoa pode atender em nome de outra.
 
-Um cartão de terceiro, número digitado, bloqueio vigente, outro vínculo incompatível ou conflito de conversas impede a associação automática. A regra de turno e o bloqueio de segurança são consultados para as duas identidades.
+| Situação | Comportamento da V0.3.0 |
+| --- | --- |
+| Número compartilhado livre | Usar esse telefone. O CPF pode localizar uma ficha anterior em outro número. |
+| Número já atribuído | Guardar a prova na conversa e pedir o CPF pelo BSUID. |
+| Uma ou mais fichas com o CPF atual | Priorizar o par CPF e telefone. Em seguida, o CPF. Em cada grupo vence o maior ID antigo. Reunir os atendimentos da ficha atual e dos perdedores por central, inclusive de quem coincidia apenas pelo telefone. |
+| Número ocupado e nenhum CPF anterior igual | Vence a ficha antiga mais recente com o telefone compartilhado. Ela recebe o CPF e o nome atuais, o username observado e o histórico das fichas reunidas. |
+| Encaminhamento antes do CPF | Usar o resumo parcial e aplicar o bloqueio interno ao contato atendido. |
+
+O vencedor recebe o nome atual, o telefone confirmado e o username disponível conforme a data da observação. Outra conversa ativa, trabalho concorrente ou bloqueio vigente preservam os cadastros naquele turno. As mensagens e as cópias dos dados de cada atendimento conservam os valores originais. [Critérios, exemplo e recuperação](conciliacao_cliente_por_cpf.md)
 
 ## Abertura e solicitação obrigatória
 

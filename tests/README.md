@@ -10,4 +10,4 @@ Na raiz da revisão em ensaio, rode `sudo -u chatbot bash deploy/testar_ubuntu.s
 | Contador contabilizado após o envio, retomada sem repetir efeito, mapa de transições e migrações reaplicáveis | [Suíte transacional](test_etapa1_pos_venda_postgres.py) |
 | Cadastro de central, provisionamento simulado e publicação no cache | [Admin e PostgreSQL](admin_central_postgres.py) |
 
-Na homologação da **Beta V0.2.1**, passaram **195 testes** na VM Ubuntu: 180 na suíte geral e 15 na suíte de integração do Django Admin. O ensaio usou PostgreSQL e Redis isolados e chamadas simuladas à Meta. Na produção, a conferência abrangeu o catálogo, a disponibilidade dos três serviços, as listas do Admin e os formulários de central.
+A suíte da **Beta V0.3.0** passou nos 203 testes da VM Ubuntu, com 188 na suíte geral e 15 na integração do Django Admin. Os casos incluem as três prioridades, o CPF anterior vazio, rollback e replay de uma fusão. O ensaio usou PostgreSQL e Redis isolados e chamadas simuladas à Meta. Na produção, a conferência abrangeu o catálogo, a disponibilidade dos três serviços, as listas do Admin e os formulários de central.

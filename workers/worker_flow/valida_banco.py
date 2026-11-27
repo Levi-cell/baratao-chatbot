@@ -1,6 +1,7 @@
 """Resolve cliente, central e conversa sem enviar mensagens."""
 from core.cache.runtime.cache_cliente import buscar_cliente_cache
 from core.cache.cache_unidade import obter_id_unidade_redis_ou_plsql
+from core.repositories.atendimento.identidade_cliente import cliente_telefone
 from core.repositories.atendimento.clientes import inserindo_em_cliente_caso_seja_novo
 from core.repositories.atendimento.chats import garantir_chat_para_atendimento
 from core.repositories.atendimento.conversas import buscar_estado_conversa, inserindo_em_conversa_caso_seja_nova
@@ -11,7 +12,8 @@ from core.repositories.atendimento.fila import ler_identidade_fila
 
 def valida_cliente(telefone, cursor):
     id_cliente = buscar_cliente_cache(telefone)
-    if id_cliente:
+    # Uma fila legada pode sobreviver à troca de titular do telefone.
+    if id_cliente and cliente_telefone(telefone, cursor) == id_cliente:
         return id_cliente, False, False
     id_cliente, inserido = inserindo_em_cliente_caso_seja_novo(telefone, cursor)
     return id_cliente, inserido, True

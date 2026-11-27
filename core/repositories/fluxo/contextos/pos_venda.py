@@ -17,7 +17,7 @@ def buscar_contexto_pos_venda(id_conversa, cursor):
                ARRAY(SELECT ARRAY[p.numero, f.nome] FROM chatbot.pedido_conversa p
                      LEFT JOIN chatbot.filial_compra f ON f.codigo = p.codigo_filial
                      WHERE p.id_conversa = c.id_conversa ORDER BY p.numero),
-               a.perdeu_nota, a.detalhes
+               a.perdeu_nota, a.detalhes, a.telefone_compartilhado
         FROM chatbot.conversa c
         JOIN chatbot.central_pos_venda b ON b.id_central = c.id_central
         JOIN chatbot.atendimento_pos_venda a ON a.id_conversa = c.id_conversa
@@ -35,7 +35,7 @@ def buscar_contexto_pos_venda(id_conversa, cursor):
         raise ValueError("Cadastro/central ausente para a conversa.")
     telefone, uid, motivo, etapa, wamids, erros, suspenso = ler_rota_contato(id_conversa,cursor)
     return {
-        "wa_id_confirmado": None if suspenso else telefone, "bsuid_vigente": uid,
+        "wa_id_confirmado": None if suspenso or row[15] else telefone, "bsuid_vigente": uid,
         "reconfirmar_telefone": bool(suspenso),
         "solicitacao_contato": {"motivo": motivo, "etapa": etapa, "wamids": wamids, "erros": erros}
                               if motivo else None,
@@ -50,6 +50,7 @@ def buscar_contexto_pos_venda(id_conversa, cursor):
         "produto": row[6],
         "assunto": row[7],
         "pedidos_com_filial": row[12],
+        "telefone_compartilhado": row[15],
         "perdeu_nota": row[13],
         "detalhes": row[14],
         "codigos_filiais": frozenset(row[8] or ()),

@@ -6,7 +6,7 @@ O atendimento determinístico tem seis etapas de coleta e uma de encaminhamento.
 
 | Camada | Responsabilidade |
 | --- | --- |
-| Webhook | Verificar envelope, assinatura, identidade empresarial e elegibilidade do turno. Resolver ou conciliar identidade com as provas disponíveis e inserir a mensagem uma vez na fila. |
+| Webhook | Verificar envelope, assinatura, identidade empresarial e elegibilidade do turno. Resolver o remetente, conferir a prova oficial do telefone e inserir a mensagem uma vez na fila. Na V0.3.0, a união de cadastros pertence ao efeito transacional da etapa de CPF. |
 | Worker de fluxo | Reservar a entrada, conferir ordem, obter e renovar o lock da conversa, carregar contexto e confirmar os checkpoints. Coordenar os rollbacks e as tentativas. |
 | Validador | Extrair dados e decidir se a entrada é aceita. As regras puras ficam em `core/validacoes`. A adaptação ao contexto fica em `workers/worker_flow/response_flow/etapas/validadores_contexto`. |
 | Resolver | Selecionar apresentação, correção ou transição permitida. Uma repetição por mídia usa o mesmo limite das demais correções da etapa. |

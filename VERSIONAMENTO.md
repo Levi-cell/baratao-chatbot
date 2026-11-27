@@ -22,6 +22,10 @@ Commit: `16779d6699d6f45a141c127cda8f84cef7269e00`
 
 Commit: `703f386f7647cb5096daf29816ede50059264674`
 
+### Beta V0.3.0 — Concilia cadastros por CPF e telefone confirmado
+
+Commit: PENDENTE
+
 ## Padrão de numeração
 
 Adotamos o formato `VMAJOR.MINOR.PATCH`, seguindo o versionamento semântico.

@@ -4,7 +4,7 @@ Sistema de atendimento automatizado de pós-venda pelo WhatsApp, desenvolvido pa
 
 O projeto utiliza um fluxo determinístico, com etapas e transições controladas pelo banco de dados, processamento assíncrono de mensagens e persistência do histórico de atendimento. Também possui uma interface web de monitoramento e um componente independente de acompanhamento do consumo da API da Meta.
 
-**Beta V0.2.1.** O webhook e os dois workers rodam na VM Ubuntu. O atendimento tem sete etapas. O Django Admin permite administrar centrais e consultar fila, histórico e transições. O portal dos operadores exibe o consumo por central e mês. Parte das métricas herdadas ainda requer adaptação ao varejo. [Admin e painel](callback/README.md#admin-e-painel)
+**Beta V0.3.0.** O webhook e os dois workers rodam na VM Ubuntu. O atendimento tem sete etapas. O Django Admin permite administrar centrais e consultar fila, histórico e transições. O portal dos operadores exibe o consumo por central e mês. Parte das métricas herdadas ainda requer adaptação ao varejo. [Admin e painel](callback/README.md#admin-e-painel)
 
 ## Objetivos
 

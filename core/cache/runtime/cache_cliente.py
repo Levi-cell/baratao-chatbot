@@ -96,8 +96,8 @@ def salvar_cliente_cache(waid_telefone, id_cliente, *, id_central=None, tipo="wa
         return False
 
 
-def remover_cliente_cache(waid_telefone):
-    key = _montar_key_cliente(waid_telefone)
+def remover_cliente_cache(waid_telefone, *, id_central=None, tipo="wa_id"):
+    key = chave_lookup_cliente(id_central, tipo, waid_telefone)
 
     if key is None:
         return False

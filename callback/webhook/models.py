@@ -75,6 +75,8 @@ class Cliente(models.Model):
     class Meta:
         managed = False
         db_table = "cliente"
+        indexes = [models.Index(fields=["cpf_titular", "id_cliente"], name="cliente_cpf_conciliacao",
+                                condition=models.Q(cpf_titular__isnull=False))]
 
 
 class ContatoInterno(models.Model):
@@ -162,6 +164,7 @@ class AtendimentoPosVenda(models.Model):
     detalhes = models.TextField(null=True)
     encaminhado_moveis = models.CharField(null=True)
     encaminhado_sofas = models.CharField(null=True)
+    telefone_compartilhado = models.CharField(null=True, editable=False)
 
     class Meta:
         managed = False

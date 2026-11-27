@@ -8,7 +8,7 @@ Referência em **26 de novembro de 2026**. A Meta publicou janelas por semestre.
 |---|---|
 | Quem envia? | O cadastro da central associa o número empresarial, a conta de mensagens e, quando disponível, o WAAC ID. O envio usa `waac_id` preenchido no caminho da URL e usa `phone_number_id` enquanto aquele campo estiver vazio. O corpo das mensagens de atendimento leva `messaging_account_id`, obtido de `waba_id`. |
 | Quem recebe? | O telefone confirmado tem preferência. Quando o telefone não está disponível, o Theo pode responder pelo BSUID vinculado à central. O username é opcional e serve para apresentação. O webhook precisa de um endereço de remetente utilizável. |
-| Quando pedir o telefone? | Toda conversa nova começa pelo nome. Se chegou somente com BSUID, o Theo pede o contato pelo botão oficial antes de perguntar o CPF. O cadastro antigo do telefone pode ser conciliado após a prova. |
+| Quando pedir o telefone? | Toda conversa nova começa pelo nome. Se chegou somente com BSUID, o Theo pede o contato pelo botão oficial antes de perguntar o CPF. Na V0.3.0, a conciliação do cadastro aguarda também a conferência do CPF na etapa 2. |
 | O que acontece se o endereço mudar? | Um evento de sistema autenticado que liga o BSUID anterior ao novo suspende a rota telefônica. Na próxima interação, o Theo pede a confirmação pelo BSUID e retoma a conversa. Um timeout, uma falha de autorização ou uma falha genérica de entrega segue o tratamento de erros existente. |
 | Quando há bloqueio? | O encaminhamento humano confirmado gera bloqueio de atendimento de 90 dias no sistema. A proteção contra flood registra o bloqueio de segurança e pede bloqueio à Meta. A central suspensa no Admin preserva as regras de fila e retomada. |
 
@@ -16,7 +16,7 @@ Os caminhos antigo e novo convivem por central. A seleção ocorre antes do envi
 
 ## Versão publicada e verificações por central
 
-A Beta V0.2.1 já está em produção. A base do Baratão concluiu as migrações abaixo e tem sete etapas e 21 transições. Os passos de instalação servem para reproduzir a configuração em outro ambiente. As ações futuras continuam condicionadas à disponibilização pela Meta na conta da central.
+A Beta V0.3.0 inclui a conciliação pelo CPF e telefone confirmado. A base do Baratão concluiu as migrações abaixo e tem sete etapas e 21 transições. Os passos de instalação servem para reproduzir a configuração em outro ambiente. As ações futuras continuam condicionadas à disponibilização pela Meta na conta da central.
 
 1. **Responsável pelo banco.** Parar o webhook e os consumidores e executar o [SQL consolidado](deploy/migrations/20261126_pendencias_baratao_etapas_sequenciais.sql) na base de 25/11. Ele reúne remetente, identidade do cliente e etapas sequenciais. Na base já confirmada com nove etapas, aplicar em seguida a [migração de sete etapas](deploy/migrations/20261126_baratao_sete_etapas.sql). Aplicar os complementos de recoleta do titular e de repetição por mídia conforme a versão de origem. O catálogo da Beta V0.2.0 tem sete etapas e 21 transições. [Sequência de migrações](core/database/README.md)
 2. **Responsável pela central.** Conferir no Django Admin o número comercial, a conta de mensagens e os contatos de pós-venda. Manter o WAAC vazio até a Meta fornecer o valor daquela central. A ativação comercial é uma decisão explícita do operador.

@@ -2,7 +2,8 @@ from core.repositories.atendimento.solicitacao_contato import pendencia_ativa
 from core.repositories.atendimento.identidade_cliente import buscar_alias, serializar_chave, cliente_telefone
 from core.validacoes.compartilhamento_contato import telefone_compartilhado
 from core.integrations.whatsapp.identidade_cliente import extrair_identidade
-from core.identidade_atendimento import IdentidadeDivergente, conciliar_contato_comprovado, resolver_cliente, rotacionar_bsuid
+from core.identidade_atendimento import IdentidadeDivergente, resolver_cliente, rotacionar_bsuid
+from core.repositories.atendimento.conciliacao_cliente import telefone_em_conferencia
 from core.repositories.atendimento.identidade_cliente import buscar_central, dados_telefone, impedimento
 import logging
 from datetime import datetime, timezone
@@ -38,22 +39,38 @@ def inserir_dados_na_tabela_fila(dados, cursor):
     if entrada_ja_registrada(dados["id_hash_msg"], cursor):
         return {"status": "ignored", "reason": "conflito_unico"}
     uid = dados.get("user_id_origem")
-    contato = _prova_solicitada(dados, uid, cursor)
-    # O envelope do cartão pode revelar simultaneamente BSUID e telefone antigo.
-    # Só a prova vinculada à solicitação permite resolver primeiro pelo provisório.
-    origem = {**dados, "cliente_telefone": None} if contato else dados
+    if uid:
+        serializar_chave(f"bs:{central}:{uid}", cursor)
+    contato, motivo = _prova_solicitada(dados, uid, cursor)
+    telefone_da_conversa = telefone_em_conferencia(central, uid, cursor) if uid else None
+    telefone_envelope = dados.get("cliente_telefone")
+    if (contato or telefone_da_conversa) and not dados.get("assinatura_verificada"):
+        return {"status": "ignored", "reason": "contato_exige_assinatura"}
+    # Um cartão oficial e as respostas posteriores podem trazer também o WA ID.
+    # A conversa continua pelo BSUID até ser possível decidir sobre o cadastro.
+    if telefone_da_conversa and telefone_envelope and telefone_envelope != telefone_da_conversa:
+        raise IdentidadeDivergente("O telefone mudou durante a conferência do cadastro.")
+    segue_por_bsuid = bool(contato or telefone_da_conversa)
+    origem = {**dados, "cliente_telefone": None} if segue_por_bsuid else dados
     cliente = dados["id_cliente"] = resolver_cliente(origem, central, cursor)
-    ids = [v for v in (dados_telefone(cliente, cursor), uid, contato) if v]
+    ids = [v for v in (dados_telefone(cliente, cursor), uid, contato, telefone_da_conversa) if v]
     if impedimento(central, cliente, ids, cursor):
         return {"status": "ignored", "reason": "cliente_impedido"}
 
-    canonica = None
     if contato:
         serializar_chave(f"wa:{contato}", cursor)
         canonica = cliente_telefone(contato, cursor)
         if canonica and canonica != cliente and impedimento(central, canonica, ids, cursor):
             return {"status": "ignored", "reason": "cliente_impedido"}
         dados["interativo"]["_telefone_verificado"] = contato
+        if canonica and canonica != cliente:
+            if motivo != "cadastro":
+                return {"status": "ignored", "reason": "contato_exige_conciliacao"}
+            dados["interativo"]["_telefone_em_outro_cadastro"] = True
+            dados["cliente_telefone"] = None
+    elif segue_por_bsuid:
+        # Evita publicar no cache do telefone ou bloquear o outro dono ao encerrar.
+        dados["cliente_telefone"] = None
 
     turno = avaliar_turno_cliente_para_fila(
         cursor=cursor,
@@ -90,22 +107,9 @@ def inserir_dados_na_tabela_fila(dados, cursor):
             "reason": turno["motivo"],
         }
 
-    if canonica and canonica != cliente:
-        if not dados.get("assinatura_verificada"):
-            return {"status": "ignored", "reason": "contato_exige_assinatura"}
-        destino = avaliar_turno_cliente_para_fila(cursor, canonica, dados["id_phone_unidade"],
-                                                 dados["received_data_hora"], usar_lock=True)
-        if not destino["pode_enfileirar"]:
-            return {"status": "ignored", "reason": destino["motivo"]}
-        if not conciliar_contato_comprovado(dados, cliente, canonica, uid, cursor):
-            return {"status": "ignored", "reason": "contato_exige_conciliacao"}
-        dados["id_cliente"] = canonica
-
     id_mensagem = inserir_entrada_fila(dados, cursor)
 
     if id_mensagem is None:
-        if canonica and canonica != cliente:
-            raise IdentidadeDivergente("Conciliação revertida por reentrega concorrente.")
         logger.info(
             "fila_insert_ignorado | motivo=conflito_unico acao=nao_inserir id_msg=%s cliente=%s phone_number_id=%s",
             short_value(dados["id_hash_msg"]),
@@ -126,19 +130,18 @@ def inserir_dados_na_tabela_fila(dados, cursor):
 
 def _prova_solicitada(dados, uid, cursor):
     if not uid or dados["tipo_mensagem"] != "contacts":
-        return None
+        return None, None
     central = dados["id_central"]
-    serializar_chave(f"bs:{central}:{uid}", cursor)
     alias = buscar_alias(central, uid, cursor)
     if not alias or not alias[1]:
-        return None
+        return None, None
     pendencia = pendencia_ativa(central, alias[0], uid, cursor)
     if not pendencia:
-        return None
+        return None, None
     prova = telefone_compartilhado(dados["interativo"] or {}, uid, pendencia[0])
     if prova and dados.get("cliente_telefone") not in (None, prova):
         raise IdentidadeDivergente("O telefone do envelope diverge do cartão solicitado.")
-    return prova
+    return prova, pendencia[1]
 
 
 def extrair_dados_whatsapp(data):

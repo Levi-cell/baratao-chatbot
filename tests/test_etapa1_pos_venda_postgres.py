@@ -772,7 +772,7 @@ class WorkerPostgresTests(unittest.TestCase):
             self.assertNotIn("01234567890", resumo)
             self.assertNotIn("João da Silva", resumo)
 
-    def test_contato_comprovado_reconcilia_conversa_provisoria_com_o_chat_antigo(self):
+    def test_par_exato_vence_cpf_igual_mais_recente(self):
         self.preparar_produto()
         self.encerrar_fixture_ha_91_dias()
         for texto in ("Oi", "Ana da Silva"):
@@ -781,11 +781,19 @@ class WorkerPostgresTests(unittest.TestCase):
         def ids():
             return self.adm.execute("SELECT id_cliente FROM chatbot.cliente ORDER BY id_cliente").fetchall()
         canonico, provisorio = ids()
+        duplicado = self.adm.execute("""
+            INSERT INTO chatbot.cliente (cpf_titular) VALUES ('01234567890') RETURNING id_cliente
+        """).fetchone()
         conversa = self.adm.execute("SELECT id_conversa FROM chatbot.conversa WHERE status_ativa").fetchone()
         telefone = "5511999990000"
         self.assertEqual(self.entrada_privada(cartao=True, telefone=telefone, assinada=False)["status"], "ignored")
-        self.assertEqual(ids(), [canonico, provisorio])
+        self.assertEqual(ids(), [canonico, provisorio, duplicado])
         self.assertEqual(self.entrada_privada(cartao=True, telefone=telefone, envelope_wa=telefone)["status"], "inserted")
+        self.ciclo()
+        self.assertEqual(ids(), [canonico, provisorio, duplicado])
+        self.assertIn("CPF do titular", self.wa.send_message.call_args.kwargs["text"])
+        self.assertEqual(self.adm.execute("SELECT nome_titular FROM chatbot.cliente WHERE id_cliente=%s", canonico).fetchone(), ("João da Silva",))
+        self.assertEqual(self.entrada_privada("Meu CPF é 012.345.678-90", envelope_wa=telefone)["status"], "inserted")
         self.ciclo()
         self.assertEqual(ids(), [canonico])
         self.assertEqual(self.adm.execute("SELECT id_conversa FROM chatbot.conversa WHERE status_ativa").fetchone(), conversa)
@@ -793,11 +801,228 @@ class WorkerPostgresTests(unittest.TestCase):
         self.assertEqual(self.adm.execute("SELECT DISTINCT id_cliente FROM chatbot.fila_mensagens WHERE user_id_origem IS NOT NULL").fetchall(), [canonico])
         self.assertEqual(self.adm.execute("SELECT id_cliente FROM chatbot.identidade_bsuid WHERE vigente").fetchone(), canonico)
         self.assertEqual(self.adm.execute("SELECT nome_titular,cpf_titular FROM chatbot.atendimento_pos_venda ORDER BY id_conversa").fetchall(),
-                         [("João da Silva", "01234567890"), ("Ana da Silva", None)])
-        self.assertIn("CPF do titular", self.wa.send_message.call_args.kwargs["text"])
-        self.entrada_privada("12345678901")
+                         [("João da Silva", "01234567890"), ("Ana da Silva", "01234567890")])
+        self.assertEqual(self.adm.execute("SELECT nome_titular FROM chatbot.cliente").fetchone(), ("Ana da Silva",))
+        self.entrada_privada("Móveis")
         self.ciclo()
-        self.assertEqual(self.adm.execute("SELECT cpf_titular FROM chatbot.cliente").fetchone(), ("12345678901",))
+        self.assertEqual(self.adm.execute("SELECT tipo_destinatario,valor_destinatario FROM chatbot.historico_mensagens WHERE quem_enviou='bot' ORDER BY id_mensagem DESC LIMIT 1").fetchone(), ("wa_id", telefone))
+
+    def conferir_vencedor_por_telefone(self, cpf_antigo):
+        self.preparar_produto()
+        self.encerrar_fixture_ha_91_dias()
+        self.adm.execute("UPDATE chatbot.cliente SET cpf_titular=%s", (cpf_antigo,))
+        antigo = self.adm.execute("SELECT id_cliente FROM chatbot.cliente").fetchone()[0]
+        self.adm.execute("""
+            INSERT INTO chatbot.identidade_bsuid (id_central,user_id,id_cliente,wamid_origem)
+            VALUES (2,'alias-anterior',%s,'wamid.anterior')
+        """, (antigo,))
+        telefone = "5511999990000"
+        for texto in ("Oi", "Ana da Silva"):
+            self.entrada_privada(texto)
+            self.ciclo()
+        self.entrada_privada(cartao=True, telefone=telefone, envelope_wa=telefone)
+        self.ciclo()
+        self.entrada_privada("inválido", envelope_wa=telefone)
+        self.ciclo()
+        self.assertEqual(self.adm.execute("SELECT count(*) FROM chatbot.cliente").fetchone(), (2,))
+        self.entrada_privada("12345678901", envelope_wa=telefone)
+        self.ciclo()
+        self.assertEqual(self.adm.execute("""
+            SELECT id_cliente,nome_titular,cpf_titular,waid_telefone,username FROM chatbot.cliente
+        """).fetchall(), [(antigo, "Ana da Silva", "12345678901", telefone, "ana.silva")])
+        self.assertEqual(self.adm.execute("""
+            SELECT a.nome_titular,a.cpf_titular,ch.id_cliente
+            FROM chatbot.atendimento_pos_venda a JOIN chatbot.conversa c USING(id_conversa)
+            JOIN chatbot.chat ch USING(id_chat) ORDER BY c.iniciou_em
+        """).fetchall(), [("João da Silva", "01234567890", antigo), ("Ana da Silva", "12345678901", antigo)])
+        self.assertEqual(self.adm.execute("""
+            SELECT vigente FROM chatbot.identidade_bsuid WHERE user_id='alias-anterior'
+        """).fetchone(), (False,))
+        for texto in ("Móveis", "Entrega", "Perdi a nota", "Quero saber a data"):
+            self.assertEqual(self.entrada_privada(texto, envelope_wa=telefone)["status"], "inserted")
+            self.ciclo()
+        self.assertEqual(self.adm.execute("""
+            SELECT tipo_destinatario,valor_destinatario FROM chatbot.historico_mensagens
+            WHERE quem_enviou='bot' ORDER BY id_mensagem DESC LIMIT 1
+        """).fetchone(), ("wa_id", telefone))
+        self.assertEqual(self.adm.execute("""
+            SELECT id_etapa_atual,status_ativa FROM chatbot.conversa ORDER BY id_conversa DESC LIMIT 1
+        """).fetchone(), (7, False))
+
+    def test_somente_telefone_igual_atualiza_cpf_e_preserva_historico(self):
+        self.conferir_vencedor_por_telefone("01234567890")
+
+    def test_somente_telefone_igual_preenche_cpf_anterior_ausente(self):
+        self.conferir_vencedor_por_telefone(None)
+
+    def test_desempate_em_dados_legados_respeita_grupo_e_exclui_provisorio(self):
+        from core.identidade_atendimento import escolher_cadastro_vencedor
+        cpf, tel = "01234567890", "5511999990000"
+        candidatos = [(50, None, tel, False), (10, "11111111111", tel, False), (30, None, tel, False)]
+        self.assertEqual(escolher_cadastro_vencedor(candidatos, 50, cpf, tel), 30)
+        candidatos.extend([(4, cpf, None, False), (9, cpf, "5575999990000", False)])
+        self.assertEqual(escolher_cadastro_vencedor(candidatos, 50, cpf, tel), 9)
+        candidatos.extend([(2, cpf, tel, False), (7, cpf, tel, False)])
+        self.assertEqual(escolher_cadastro_vencedor(candidatos, 50, cpf, tel), 7)
+
+    def test_numero_novo_e_mesmo_cpf_atualizam_a_ficha_antiga(self):
+        self.preparar_produto()
+        self.encerrar_fixture_ha_91_dias()
+        for texto in ("Oi", "Ana da Silva"):
+            self.entrada_privada(texto)
+            self.ciclo()
+        novo = "5575999991234"
+        self.entrada_privada(cartao=True, telefone=novo)
+        self.ciclo()
+        self.entrada_privada("01234567890")
+        self.ciclo()
+        self.assertEqual(self.adm.execute("SELECT waid_telefone, nome_titular FROM chatbot.cliente ORDER BY id_cliente").fetchall(),
+                         [(novo, "Ana da Silva")])
+        self.assertEqual(self.adm.execute("SELECT tipo_destinatario,valor_destinatario FROM chatbot.historico_mensagens WHERE quem_enviou='bot' ORDER BY id_mensagem DESC LIMIT 1").fetchone(), ("wa_id", novo))
+
+    def test_telefone_e_cpf_em_fichas_diferentes_reunem_historico_por_central(self):
+        self.preparar_produto()
+        self.encerrar_fixture_ha_91_dias()
+        telefone = "5511999990000"
+        cpf = "12345678901"
+        # O dono anterior do telefone teve atendimento com outro CPF.
+        antigo = self.adm.execute("SELECT id_conversa FROM chatbot.conversa").fetchone()[0]
+        mensagens = self.adm.execute("""
+            SELECT id_mensagem,id_hash_msg,received_data_hora FROM chatbot.historico_mensagens
+            WHERE id_conversa=%s ORDER BY id_mensagem
+        """, (antigo,)).fetchall()
+        def ficha(wa):
+            return self.adm.execute("""
+                INSERT INTO chatbot.cliente (cpf_titular,waid_telefone)
+                VALUES (%s,%s) RETURNING id_cliente
+            """, (cpf, wa)).fetchone()[0]
+
+        duplicado = ficha("557500000001")
+        vencedor = ficha("557500000002")
+        chat_outra_central = self.adm.execute("""
+            INSERT INTO chatbot.chat (id_cliente,id_central) VALUES (%s,2) RETURNING id_chat
+        """, (duplicado,)).fetchone()[0]
+        outra = self.adm.execute("""
+            INSERT INTO chatbot.conversa (id_chat,id_central,id_etapa_atual,status_ativa,
+                                          iniciou_em,finalizou_em,motivo_encerramento)
+            VALUES (%s,2,7,false,now()-interval '100 days',now()-interval '99 days','encaminhamento')
+            RETURNING id_conversa
+        """, (chat_outra_central,)).fetchone()[0]
+        self.adm.execute("""
+            INSERT INTO chatbot.identidade_bsuid (id_central,user_id,id_cliente,wamid_origem)
+            VALUES (1,'uid-antigo',%s,'wamid.antigo')
+        """, (vencedor,))
+        for texto in ("Oi", "Ana da Silva"):
+            self.entrada_privada(texto)
+            self.ciclo()
+        self.entrada_privada(cartao=True, telefone=telefone, envelope_wa=telefone)
+        self.ciclo()
+        atual = self.adm.execute("SELECT id_conversa FROM chatbot.conversa WHERE status_ativa").fetchone()[0]
+        self.entrada_privada(cpf, envelope_wa=telefone)
+        self.ciclo()
+        self.assertEqual(self.adm.execute("""
+            SELECT id_cliente,nome_titular,cpf_titular,waid_telefone FROM chatbot.cliente
+        """).fetchall(), [(vencedor, "Ana da Silva", cpf, telefone)])
+        self.assertEqual(self.adm.execute("SELECT username FROM chatbot.cliente").fetchone(), ("ana.silva",))
+        self.assertEqual(self.adm.execute("""
+            SELECT ch.id_cliente,ch.id_central,c.id_conversa FROM chatbot.chat ch
+            JOIN chatbot.conversa c USING(id_chat) ORDER BY ch.id_central,c.iniciou_em
+        """).fetchall(), [(vencedor, 1, antigo), (vencedor, 1, atual), (vencedor, 2, outra)])
+        self.assertEqual(self.adm.execute("""
+            SELECT id_mensagem,id_hash_msg,received_data_hora FROM chatbot.historico_mensagens
+            WHERE id_conversa=%s ORDER BY id_mensagem
+        """, (antigo,)).fetchall(), mensagens)
+        self.assertEqual(self.adm.execute("""
+            SELECT cpf_titular FROM chatbot.atendimento_pos_venda WHERE id_conversa=%s
+        """, (antigo,)).fetchone(), ("01234567890",))
+        self.assertEqual(self.adm.execute("""
+            SELECT id_cliente,vigente FROM chatbot.identidade_bsuid WHERE user_id='uid-antigo'
+        """).fetchone(), (vencedor, False))
+        self.entrada_privada("Móveis", envelope_wa=telefone)
+        self.ciclo()
+        self.assertEqual(self.adm.execute("""
+            SELECT id_etapa_atual FROM chatbot.conversa WHERE id_conversa=%s
+        """, (atual,)).fetchone(), (4,))
+
+    def test_rollback_da_fusao_e_replay_apos_commit(self):
+        from core.identidade_atendimento import conciliar_apos_cpf
+        from core.repositories.atendimento import conciliacao_cliente
+
+        self.preparar_produto()
+        self.encerrar_fixture_ha_91_dias()
+        for texto in ("Oi", "Ana da Silva"):
+            self.entrada_privada(texto)
+            self.ciclo()
+        telefone = "5511999990000"
+        self.entrada_privada(cartao=True, telefone=telefone)
+        self.ciclo()
+        cpf = "01234567890"
+        self.entrada_privada(cpf)
+        entrada = self.adm.execute("""
+            SELECT f.id_cliente,c.id_conversa,f.user_id_origem,f.id_mensagem,f.received_data_hora
+            FROM chatbot.fila_mensagens f JOIN chatbot.chat ch USING(id_cliente,id_central)
+            JOIN chatbot.conversa c USING(id_chat) WHERE c.status_ativa ORDER BY f.id_mensagem DESC LIMIT 1
+        """).fetchone()
+        origem, conversa, uid, fila, recebido = entrada
+        contexto = {"id_cliente": origem, "id_conversa": conversa, "id_central": 1,
+                    "id_phone_unidade": "999", "bsuid_vigente": uid, "telefone_compartilhado": telefone,
+                    "mensagem_cliente_atual": {"id_mensagem_fila": fila, "received_data_hora": recebido}}
+        def estado():
+            return tuple(self.adm.execute(consulta).fetchall() for consulta in (
+                "SELECT * FROM chatbot.cliente ORDER BY id_cliente",
+                "SELECT * FROM chatbot.chat ORDER BY id_chat",
+                "SELECT id_conversa,id_chat FROM chatbot.conversa ORDER BY id_conversa",
+                "SELECT id_mensagem,id_cliente FROM chatbot.fila_mensagens ORDER BY id_mensagem",
+                "SELECT * FROM chatbot.identidade_bsuid ORDER BY id_central,user_id",
+                "SELECT telefone_compartilhado FROM chatbot.atendimento_pos_venda ORDER BY id_conversa",
+            ))
+        anterior = estado()
+        with self.assertRaisesRegex(RuntimeError, "falha simulada"):
+            with self.adm.transaction(), self.adm.cursor() as cursor:
+                with patch.object(conciliacao_cliente, "excluir_cadastros_redundantes",
+                                  side_effect=RuntimeError("falha simulada")):
+                    conciliar_apos_cpf(contexto, cpf, cursor)
+        self.assertEqual(estado(), anterior)
+
+        # O próximo ciclo perde a finalização da fila, depois do commit dos efeitos.
+        self.ciclo(finalizar_mensagem_processada=RuntimeError("queda após o commit"))
+        confirmado = estado()
+        self.assertEqual(len(confirmado[0]), 1)
+        envios = self.wa.send_message.call_count
+        self.adm.execute("UPDATE chatbot.fila_mensagens SET next_attempt_at=now() WHERE id_mensagem=%s", (fila,))
+        self.ciclo()
+        self.assertEqual(estado(), confirmado)
+        self.assertEqual(self.wa.send_message.call_count, envios)
+        self.assertEqual(self.adm.execute("SELECT status FROM chatbot.fila_mensagens WHERE id_mensagem=%s",
+                                          (fila,)).fetchone(), ("sent",))
+
+    def test_migracao_conferencia_cpf_reaplicavel_com_duplicados(self):
+        self.adm.execute("INSERT INTO chatbot.cliente (cpf_titular) VALUES ('01234567890'),('01234567890')")
+        self.adm.execute("DROP INDEX chatbot.cliente_cpf_conciliacao")
+        self.adm.execute("ALTER TABLE chatbot.atendimento_pos_venda DROP COLUMN telefone_compartilhado")
+        sql = (ROOT / "deploy/migrations/20261127_contato_conferencia_cpf.sql").read_text(encoding="utf8")
+        self.adm.execute(sql)
+        self.adm.execute(sql)
+        self.assertTrue(self.adm.execute(
+            "SELECT to_regclass('chatbot.cliente_cpf_conciliacao') IS NOT NULL"
+        ).fetchone()[0])
+        self.assertEqual(self.adm.execute("SELECT count(*) FROM chatbot.cliente").fetchone(), (2,))
+
+    def test_encaminhamento_antes_do_cpf_preserva_o_dono_do_telefone(self):
+        self.preparar_produto()
+        self.encerrar_fixture_ha_91_dias()
+        for texto in ("Oi", "Ana da Silva"):
+            self.entrada_privada(texto)
+            self.ciclo()
+        telefone = "5511999990000"
+        self.entrada_privada(cartao=True, telefone=telefone)
+        self.ciclo()
+        self.assertEqual(self.entrada_privada("01234567890", assinada=False)["status"], "ignored")
+        self.entrada_privada("Quero falar com um humano", envelope_wa=telefone)
+        self.ciclo()
+        self.assertEqual(self.adm.execute("SELECT nome_titular,cpf_titular FROM chatbot.cliente ORDER BY id_cliente").fetchall(),
+                         [("João da Silva", "01234567890"), ("Ana da Silva", None)])
+        self.assertEqual(self.adm.execute("SELECT id_etapa_atual,status_ativa FROM chatbot.conversa ORDER BY id_conversa DESC LIMIT 1").fetchone(), (7, False))
 
     def test_contato_comprovado_respeita_bloqueio_vigente_do_cadastro_antigo(self):
         self.preparar_produto()
@@ -815,8 +1040,10 @@ class WorkerPostgresTests(unittest.TestCase):
             self.entrada_privada(texto)
             self.ciclo()
         eventos = self.adm.execute("SELECT id_conversa,id_chat FROM chatbot.conversa ORDER BY id_conversa").fetchall()
-        self.assertEqual(self.entrada_privada(cartao=True, telefone="5511999990000")["reason"],
-                         "contato_exige_conciliacao")
+        self.assertEqual(self.entrada_privada(cartao=True, telefone="5511999990000")["status"], "inserted")
+        self.ciclo()
+        self.entrada_privada("01234567890")
+        self.ciclo()
         self.assertEqual(self.adm.execute("SELECT id_conversa,id_chat FROM chatbot.conversa ORDER BY id_conversa").fetchall(), eventos)
         self.assertEqual(self.adm.execute("SELECT count(*) FROM chatbot.cliente").fetchone(), (2,))
 

@@ -1,6 +1,6 @@
 # Identidade WhatsApp do cliente e da central no Baratão
 
-**Código da Beta V0.2.1** (commit `703f386f7647cb5096daf29816ede50059264674`). Cada passo traz o conteúdo integral de um arquivo, incluindo imports, funções preexistentes e código novo. Os caminhos partem da raiz do Chatbot. Os arquivos abaixo reproduzem a versão publicada. Para homologar a integração em outra central, usar a mesma revisão do repositório e as credenciais dessa central. O SQL de instalação e as migrações atendem ambientes diferentes. [Regras do atendimento](user_id_plano_logico_teorico.md)
+**Beta V0.3.0.** Cada passo reproduz o arquivo completo da versão que concilia os cadastros na etapa de CPF. As tabelas de negócio são geridas pelo DDL. Em uma base já na V0.2.1, aplicar apenas o [SQL incremental da conferência de CPF](../deploy/migrations/20261127_contato_conferencia_cpf.sql) antes de iniciar o código novo. [Regra de conciliação](user_id_plano_logico_teorico.md#conciliação-do-cliente-provisório)
 
 ## Como usar este plano em outro ambiente
 
@@ -8,7 +8,7 @@
 - Para instalação nova, usar o DDL e o catálogo vigentes. Na base de 25/11 que já contém as filiais, parar webhook e workers e executar o [SQL consolidado](../deploy/migrations/20261126_pendencias_baratao_etapas_sequenciais.sql). Ele inclui os dois complementos de identidade registrados nos passos 2 e 3 e renumera as etapas. Para o fluxo atual, aplicar em seguida o [SQL de sete etapas](../deploy/migrations/20261126_baratao_sete_etapas.sql). Em seguida aplicar a [migração de recoleta do titular](../deploy/migrations/20261126_recoleta_titular.sql). Em toda nova conversa, nome e CPF são confirmados novamente. A solicitação de contato aberta acompanha a renumeração. Partindo do catálogo de 27 transições, aplicar a [migração de repetição por mídia](../deploy/migrations/20261127_midia_repete_etapa.sql). O botão de contato também se repete quando chega mídia.
 - A central usa seu WABA ID como Messaging Account ID. Na URL, o Phone Number ID continua disponível durante a transição. Usar um WAAC ID somente após obtê-lo da Meta para aquela central e comprovar acesso do token. O cronograma publicado prevê o novo identificador na fase de 2027 e a transição obrigatória na fase do primeiro semestre de 2028. [Modelo de contas](https://developers.facebook.com/documentation/business-messaging/whatsapp/account-model-evolution/) · [Seleção de conta de mensagens](https://developers.facebook.com/documentation/business-messaging/whatsapp/account-model-evolution/messaging/)
 - O atendimento conserva a numeração nome 1, CPF 2 e produto 3. O botão nativo fica entre nome e CPF quando falta o telefone. O quarto erro de compartilhamento encaminha ao pós-venda. Prova válida no quarto turno retoma a etapa. A troca de BSUID assinalada pela Meta suspende a rota telefônica anterior. A próxima interação válida para atendimento permite a reconfirmação dentro da janela. Recibo genérico de falha ou timeout segue a política de erro existente. [Contrato de BSUID e contato](https://developers.facebook.com/documentation/business-messaging/whatsapp/business-scoped-user-ids)
-- A origem de cada contato deve vir de webhook autenticado. A confirmação de contato exige a mesma conversa, BSUID, solicitação em aberto e cartão com origem contact_request. Se o cartão oficial revelar um cadastro antigo, reconciliar sob lock quando o chat antigo estiver livre, respeitando bloqueios e mantendo a conversa do provisório. O prazo de bloqueio por encaminhamento continua interno e não aciona bloqueio remoto.
+- A origem de cada contato deve vir de webhook autenticado. A confirmação de contato exige a mesma conversa, BSUID, solicitação em aberto e cartão com origem contact_request. Quando o telefone já tem dono, manter a rota pelo BSUID até o CPF. Na etapa 2, priorizar o par CPF e telefone, depois o CPF e por último o telefone confirmado. Desempatar pelo maior ID antigo dentro do grupo. Consolidar os históricos por central e liberar o telefone confirmado para o vencedor após o commit. Quando só o telefone coincide, a ficha vencedora recebe o CPF desta compra e o Theo passa à rota telefônica confirmada. [Critérios e exemplo](conciliacao_cliente_por_cpf.md). O prazo de bloqueio por encaminhamento continua interno e não aciona bloqueio remoto.
 - A desativação administrativa usa o campo ativa da central. O worker preserva a mensagem pendente se a central for suspensa durante o turno. O passo do flow_worker documenta a sequência de locks, commits, rollback e recuperação.
 - O parâmetro messaging_account_id escolhe a conta de mensagens. A Meta pode determiná-la quando o token só alcança uma conta no número. Se o token alcançar várias, informar a conta explicitamente, inclusive durante o período de transição. O WAAC ID usado no caminho da URL identifica outro recurso.
 - O ensaio inclui PostgreSQL local descartável, webhook com HMAC, variação dos três campos de identidade, recuperação do worker e transporte HTTP simulado com Phone Number ID e WAAC. Instalações existentes devem aplicar as migrações correspondentes ao estado do seu catálogo. [Cronograma e critérios de aceite](../CRONOGRAMA_META_2027_2028.md)
@@ -50,6 +50,8 @@ CREATE TABLE chatbot.cliente (
     cpf_titular varchar(11) CHECK (cpf_titular ~ '^[0-9]{11}$'),
     cidade_loja_compra text CHECK (cidade_loja_compra ~ '[^[:space:]]')
 );
+
+CREATE INDEX cliente_cpf_conciliacao ON chatbot.cliente (cpf_titular, id_cliente) WHERE cpf_titular IS NOT NULL;
 
 CREATE FUNCTION chatbot.preservar_cidade_loja_compra() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -134,6 +136,7 @@ CREATE TABLE chatbot.atendimento_pos_venda (
     detalhes text CHECK (btrim(detalhes) <> ''),
     encaminhado_moveis varchar CHECK (encaminhado_moveis ~ '^[1-9][0-9]{7,14}$'),
     encaminhado_sofas varchar CHECK (encaminhado_sofas ~ '^[1-9][0-9]{7,14}$'),
+    telefone_compartilhado varchar CHECK (telefone_compartilhado ~ '^[1-9][0-9]{0,14}$'),
     CHECK (encaminhado_moveis <> encaminhado_sofas),
     CHECK (CASE coalesce(produto, 'ambos')
         WHEN 'moveis' THEN encaminhado_sofas IS NULL
@@ -878,8 +881,11 @@ def falha_da_rota_atual(central, wamid, cursor):
 
 ```python
 """Resolução do cliente sob o lock de cada identificador apresentado pela Meta."""
+from dataclasses import dataclass
+
 from core.repositories.atendimento import conciliacao_cliente as conciliacao
 from core.repositories.atendimento import identidade_cliente as repo
+from core.repositories.seguranca.turno_cliente import avaliar_turno_cliente_para_fila
 
 
 class IdentidadeDivergente(ValueError):
@@ -936,29 +942,99 @@ def rotacionar_bsuid(central, sistema, wamid, cursor):
     repo.trocar_bsuid_pendente(central,anterior,novo,cursor)
     return True
 
-def conciliar_contato_comprovado(dados, provisoria, canonica, uid, cursor):
-    """Turnos e identificadores estão serializados pelo ingresso. Preserva a conversa original."""
-    central = dados["id_central"]
-    if repo.alias_vigente_do_cliente(central, canonica, cursor):
-        return False
-    origem = conciliacao.localizar_conversa_provisoria(central, provisoria, uid, cursor)
-    if not origem:
-        return False
-    conversa, chat_provisorio = origem
-    chat = conciliacao.obter_chat_canonico(canonica, central, cursor)
-    if conciliacao.tem_conversa_ativa(chat, cursor):
-        return False
-    # Um turno no chat antigo pode ter acabado entre a primeira consulta e este lock.
-    telefone = dados["interativo"]["_telefone_verificado"]
-    if repo.impedimento(central, canonica, [telefone, uid], cursor):
-        return False
-    conciliacao.mover_conversa(conversa, chat, cursor)
-    conciliacao.mover_alias(provisoria, canonica, central, uid, cursor)
-    conciliacao.mover_fila(provisoria, canonica, cursor)
-    conciliacao.atualizar_cadastro_pela_conversa(conversa, provisoria, canonica, cursor)
-    conciliacao.excluir_chat_provisorio(chat_provisorio, provisoria, cursor)
-    conciliacao.excluir_cliente_provisorio(provisoria, cursor)
-    return True
+
+@dataclass(frozen=True)
+class ResultadoConciliacao:
+    # Sem ID global, o CPF é guardado somente no atendimento deste turno.
+    cadastro_para_cpf: int | None
+    cache: dict | None = None
+
+
+def escolher_cadastro_vencedor(candidatos, origem, cpf, telefone):
+    """Compara dados anteriores à etapa 2. O maior ID desempata cada grupo."""
+    prioridades = []
+    for cliente, cpf_anterior, wa, tem_historico in candidatos:
+        if cliente == origem and cpf_anterior is None and not tem_historico:
+            continue  # O provisório não disputa o desempate com as fichas antigas.
+        mesmo_cpf = cpf_anterior == cpf
+        mesmo_telefone = wa == telefone
+        if mesmo_cpf or mesmo_telefone:
+            prioridades.append((mesmo_cpf, mesmo_telefone, cliente))
+    return max(prioridades)[2] if prioridades else origem
+
+
+def conciliar_apos_cpf(contexto, cpf, cursor):
+    """Decide antes de gravar o CPF novo. Os efeitos usam a transação do worker."""
+    origem = contexto["id_cliente"]
+    telefone = contexto.get("telefone_compartilhado") or contexto.get("wa_id_confirmado")
+    if not telefone:
+        return ResultadoConciliacao(origem)
+
+    central = contexto["id_central"]
+    conversa = contexto["id_conversa"]
+    uid = contexto.get("bsuid_vigente")
+    if uid:
+        repo.serializar_chave(f"bs:{central}:{uid}", cursor)
+    repo.serializar_chave(f"cpf:{cpf}", cursor)
+    repo.serializar_chave(f"wa:{telefone}", cursor)
+    candidatos = conciliacao.candidatos_para_cpf(origem, cpf, telefone, conversa, cursor)
+    vencedor = escolher_cadastro_vencedor(candidatos, origem, cpf, telefone)
+    telefones = {cliente: wa for cliente, _, wa, _ in candidatos}
+    perdedores = [cliente for cliente in telefones if cliente != vencedor]
+    if not perdedores:
+        return ResultadoConciliacao(vencedor)
+
+    clientes = list(telefones)
+    conciliacao.bloquear_chats(clientes, cursor)
+    aliases = conciliacao.bloquear_aliases(clientes, cursor)
+    if uid and (central, uid, origem, True, False) not in aliases:
+        return ResultadoConciliacao(None)
+    if contexto.get("telefone_compartilhado"):
+        if conciliacao.telefone_em_conferencia(central, uid, cursor) != telefone:
+            return ResultadoConciliacao(None)
+    elif telefones.get(origem) != telefone:
+        return ResultadoConciliacao(None)
+
+    entrada = contexto["mensagem_cliente_atual"]
+    numeros_envolvidos = sorted({wa for wa in telefones.values() if wa} | {telefone})
+    if (conciliacao.identificador_bloqueado(numeros_envolvidos, clientes, cursor)
+            or conciliacao.ha_bloqueio_temporario(clientes, cursor)
+            or conciliacao.ha_trabalho_em_andamento(clientes, numeros_envolvidos, conversa,
+                                                   entrada["id_mensagem_fila"], cursor)):
+        return ResultadoConciliacao(None)
+    for cliente in clientes:
+        if cliente != origem:
+            turno = avaliar_turno_cliente_para_fila(cursor, cliente, contexto["id_phone_unidade"],
+                                                   entrada["received_data_hora"], usar_lock=True)
+            if not turno["pode_enfileirar"]:
+                return ResultadoConciliacao(None)
+
+    # Um BSUID histórico não pode encaminhar outro remetente ao telefone novo.
+    # Conserve vínculos vigentes do vencedor em outras centrais se CPF e telefone coincidem.
+    mesmo_titular_e_numero = any(cliente == vencedor and anterior == cpf and wa == telefone
+                                 for cliente, anterior, wa, _ in candidatos)
+    aposentados = []
+    for c, u, dono, ativo, _ in aliases:
+        rota_atual = (c, u, dono) == (central, uid, origem)
+        outra_central_preservada = c != central and dono == vencedor and mesmo_titular_e_numero
+        if ativo and not (rota_atual or outra_central_preservada):
+            repo.aposentadoria_alias(c, u, cursor)
+            aposentados.append((c, u))
+
+    conciliacao.garantir_chats_do_vencedor(vencedor, perdedores, cursor)
+    conciliacao.mover_fila(perdedores, vencedor, cursor)
+    conciliacao.mover_conversas(perdedores, vencedor, cursor)
+    conciliacao.mover_aliases(perdedores, vencedor, cursor)
+    conciliacao.liberar_telefone(perdedores, telefone, cursor)
+    conciliacao.atualizar_cadastro_pela_conversa(conversa, vencedor, telefone, cursor)
+    conciliacao.guardar_telefone_compartilhado(conversa, None, cursor)
+    conciliacao.excluir_chats_vazios(perdedores, cursor)
+    conciliacao.excluir_cadastros_redundantes(perdedores, cursor)
+    return ResultadoConciliacao(vencedor, {
+        "cliente": vencedor, "telefone": telefone, "central": central, "uid": uid,
+        "telefones_antigos": [wa for wa in telefones.values() if wa and wa != telefone],
+        "aliases_antigos": aposentados,
+    })
 ```
 
 ## 8. `callback/monitoramento/apresentacao.py` (alterar)
@@ -1575,7 +1651,8 @@ from core.repositories.atendimento.solicitacao_contato import pendencia_ativa
 from core.repositories.atendimento.identidade_cliente import buscar_alias, serializar_chave, cliente_telefone
 from core.validacoes.compartilhamento_contato import telefone_compartilhado
 from core.integrations.whatsapp.identidade_cliente import extrair_identidade
-from core.identidade_atendimento import IdentidadeDivergente, conciliar_contato_comprovado, resolver_cliente, rotacionar_bsuid
+from core.identidade_atendimento import IdentidadeDivergente, resolver_cliente, rotacionar_bsuid
+from core.repositories.atendimento.conciliacao_cliente import telefone_em_conferencia
 from core.repositories.atendimento.identidade_cliente import buscar_central, dados_telefone, impedimento
 import logging
 from datetime import datetime, timezone
@@ -1611,22 +1688,38 @@ def inserir_dados_na_tabela_fila(dados, cursor):
     if entrada_ja_registrada(dados["id_hash_msg"], cursor):
         return {"status": "ignored", "reason": "conflito_unico"}
     uid = dados.get("user_id_origem")
-    contato = _prova_solicitada(dados, uid, cursor)
-    # O envelope do cartão pode revelar simultaneamente BSUID e telefone antigo.
-    # Só a prova vinculada à solicitação permite resolver primeiro pelo provisório.
-    origem = {**dados, "cliente_telefone": None} if contato else dados
+    if uid:
+        serializar_chave(f"bs:{central}:{uid}", cursor)
+    contato, motivo = _prova_solicitada(dados, uid, cursor)
+    telefone_da_conversa = telefone_em_conferencia(central, uid, cursor) if uid else None
+    telefone_envelope = dados.get("cliente_telefone")
+    if (contato or telefone_da_conversa) and not dados.get("assinatura_verificada"):
+        return {"status": "ignored", "reason": "contato_exige_assinatura"}
+    # Um cartão oficial e as respostas posteriores podem trazer também o WA ID.
+    # A conversa continua pelo BSUID até ser possível decidir sobre o cadastro.
+    if telefone_da_conversa and telefone_envelope and telefone_envelope != telefone_da_conversa:
+        raise IdentidadeDivergente("O telefone mudou durante a conferência do cadastro.")
+    segue_por_bsuid = bool(contato or telefone_da_conversa)
+    origem = {**dados, "cliente_telefone": None} if segue_por_bsuid else dados
     cliente = dados["id_cliente"] = resolver_cliente(origem, central, cursor)
-    ids = [v for v in (dados_telefone(cliente, cursor), uid, contato) if v]
+    ids = [v for v in (dados_telefone(cliente, cursor), uid, contato, telefone_da_conversa) if v]
     if impedimento(central, cliente, ids, cursor):
         return {"status": "ignored", "reason": "cliente_impedido"}
 
-    canonica = None
     if contato:
         serializar_chave(f"wa:{contato}", cursor)
         canonica = cliente_telefone(contato, cursor)
         if canonica and canonica != cliente and impedimento(central, canonica, ids, cursor):
             return {"status": "ignored", "reason": "cliente_impedido"}
         dados["interativo"]["_telefone_verificado"] = contato
+        if canonica and canonica != cliente:
+            if motivo != "cadastro":
+                return {"status": "ignored", "reason": "contato_exige_conciliacao"}
+            dados["interativo"]["_telefone_em_outro_cadastro"] = True
+            dados["cliente_telefone"] = None
+    elif segue_por_bsuid:
+        # Evita publicar no cache do telefone ou bloquear o outro dono ao encerrar.
+        dados["cliente_telefone"] = None
 
     turno = avaliar_turno_cliente_para_fila(
         cursor=cursor,
@@ -1663,22 +1756,9 @@ def inserir_dados_na_tabela_fila(dados, cursor):
             "reason": turno["motivo"],
         }
 
-    if canonica and canonica != cliente:
-        if not dados.get("assinatura_verificada"):
-            return {"status": "ignored", "reason": "contato_exige_assinatura"}
-        destino = avaliar_turno_cliente_para_fila(cursor, canonica, dados["id_phone_unidade"],
-                                                 dados["received_data_hora"], usar_lock=True)
-        if not destino["pode_enfileirar"]:
-            return {"status": "ignored", "reason": destino["motivo"]}
-        if not conciliar_contato_comprovado(dados, cliente, canonica, uid, cursor):
-            return {"status": "ignored", "reason": "contato_exige_conciliacao"}
-        dados["id_cliente"] = canonica
-
     id_mensagem = inserir_entrada_fila(dados, cursor)
 
     if id_mensagem is None:
-        if canonica and canonica != cliente:
-            raise IdentidadeDivergente("Conciliação revertida por reentrega concorrente.")
         logger.info(
             "fila_insert_ignorado | motivo=conflito_unico acao=nao_inserir id_msg=%s cliente=%s phone_number_id=%s",
             short_value(dados["id_hash_msg"]),
@@ -1699,19 +1779,18 @@ def inserir_dados_na_tabela_fila(dados, cursor):
 
 def _prova_solicitada(dados, uid, cursor):
     if not uid or dados["tipo_mensagem"] != "contacts":
-        return None
+        return None, None
     central = dados["id_central"]
-    serializar_chave(f"bs:{central}:{uid}", cursor)
     alias = buscar_alias(central, uid, cursor)
     if not alias or not alias[1]:
-        return None
+        return None, None
     pendencia = pendencia_ativa(central, alias[0], uid, cursor)
     if not pendencia:
-        return None
+        return None, None
     prova = telefone_compartilhado(dados["interativo"] or {}, uid, pendencia[0])
     if prova and dados.get("cliente_telefone") not in (None, prova):
         raise IdentidadeDivergente("O telefone do envelope diverge do cartão solicitado.")
-    return prova
+    return prova, pendencia[1]
 
 
 def extrair_dados_whatsapp(data):
@@ -2425,8 +2504,8 @@ def salvar_cliente_cache(waid_telefone, id_cliente, *, id_central=None, tipo="wa
         return False
 
 
-def remover_cliente_cache(waid_telefone):
-    key = _montar_key_cliente(waid_telefone)
+def remover_cliente_cache(waid_telefone, *, id_central=None, tipo="wa_id"):
+    key = chave_lookup_cliente(id_central, tipo, waid_telefone)
 
     if key is None:
         return False
@@ -3336,7 +3415,7 @@ def repetir_solicitacao(conversa, uid, wamid, cursor):
 
 def pendencia_ativa(central,cliente,uid,cursor):
     cursor.execute("""
-        SELECT s.wamids_aceitos FROM chatbot.solicitacao_contato s
+        SELECT s.wamids_aceitos, s.motivo FROM chatbot.solicitacao_contato s
         JOIN chatbot.conversa c USING(id_conversa) JOIN chatbot.chat ch USING(id_chat)
         WHERE c.status_ativa AND c.id_central=%s AND ch.id_cliente=%s AND s.bsuid_destino=%s
         FOR UPDATE OF s
@@ -3366,7 +3445,7 @@ def buscar_contexto_pos_venda(id_conversa, cursor):
                ARRAY(SELECT ARRAY[p.numero, f.nome] FROM chatbot.pedido_conversa p
                      LEFT JOIN chatbot.filial_compra f ON f.codigo = p.codigo_filial
                      WHERE p.id_conversa = c.id_conversa ORDER BY p.numero),
-               a.perdeu_nota, a.detalhes
+               a.perdeu_nota, a.detalhes, a.telefone_compartilhado
         FROM chatbot.conversa c
         JOIN chatbot.central_pos_venda b ON b.id_central = c.id_central
         JOIN chatbot.atendimento_pos_venda a ON a.id_conversa = c.id_conversa
@@ -3384,7 +3463,7 @@ def buscar_contexto_pos_venda(id_conversa, cursor):
         raise ValueError("Cadastro/central ausente para a conversa.")
     telefone, uid, motivo, etapa, wamids, erros, suspenso = ler_rota_contato(id_conversa,cursor)
     return {
-        "wa_id_confirmado": None if suspenso else telefone, "bsuid_vigente": uid,
+        "wa_id_confirmado": None if suspenso or row[15] else telefone, "bsuid_vigente": uid,
         "reconfirmar_telefone": bool(suspenso),
         "solicitacao_contato": {"motivo": motivo, "etapa": etapa, "wamids": wamids, "erros": erros}
                               if motivo else None,
@@ -3399,6 +3478,7 @@ def buscar_contexto_pos_venda(id_conversa, cursor):
         "produto": row[6],
         "assunto": row[7],
         "pedidos_com_filial": row[12],
+        "telefone_compartilhado": row[15],
         "perdeu_nota": row[13],
         "detalhes": row[14],
         "codigos_filiais": frozenset(row[8] or ()),
@@ -4189,18 +4269,21 @@ def resolver_turno_contato(ctx):
         if not ctx.get("telefone_compartilhado_apto") or ctx["telefone_compartilhado_apto"] != prova:
             raise ValueError("Prova conflitante ou sem autorização no ingresso")
         phone = ctx["central"]["phone_number_id"]
+        em_outro_cadastro = bool(entrada["estrutura_compartilhamento"].get("_telefone_em_outro_cadastro"))
+        destinatario = uid if em_outro_cadastro else prova
         if etapa == ETAPA_CPF:
             texto = montar_mensagem_etapa2(nome, contato_confirmado=True)
-            envio = enviar_texto_pos_venda(prova, phone, texto, etapa)
+            envio = enviar_texto_pos_venda(destinatario, phone, texto, etapa)
         else:
             senders = {ETAPA_NOME: enviar_etapa1, ETAPA_PRODUTO: enviar_etapa3,
                        ETAPA_ASSUNTO: enviar_etapa4, ETAPA_PEDIDOS: enviar_etapa5_pedidos,
                         ETAPA_DETALHES: enviar_etapa6_detalhes}
             from core.integrations.whatsapp.pywa_functions.cliente import usar_prefixo_mensagem_bot
             with usar_prefixo_mensagem_bot("Obrigado por compartilhar seu contato!"):
-                envio = senders[etapa](prova, phone)
+                envio = senders[etapa](destinatario, phone)
         return dict(envio, operacao_contato="confirmar", bsuid_contato=uid, telefone_provado=prova,
-                    tipo_destinatario="wa_id", valor_destinatario=prova)
+                    telefone_em_outro_cadastro=em_outro_cadastro,
+                    tipo_destinatario="bsuid" if em_outro_cadastro else "wa_id", valor_destinatario=destinatario)
     if acao in {"repetir_botao", "repetir_por_midia"}:
         return pedir(ctx, etapa, nome, repetir=True, midia=acao == "repetir_por_midia")
     destino = resolver_destino_transicao(ctx, acao, destinos_esperados={ETAPA_ENCAMINHAMENTO})
@@ -4436,7 +4519,8 @@ def flow_sender(contexto_historico):
         ctx = dict(contexto_historico, destinatario_envio=valor)
         if pendencia:
             envio = resolver_turno_contato(ctx)
-        elif uid and not telefone and ctx["id_etapa_atual"] != ETAPA_NOME:
+        elif (uid and not telefone and ctx["id_etapa_atual"] != ETAPA_NOME
+              and (not ctx.get("telefone_compartilhado") or ctx.get("reconfirmar_telefone"))):
             envio = pedir(ctx, ctx["id_etapa_atual"], ctx["cadastro"].get("nome_titular"),
                           reconfirmar=ctx.get("reconfirmar_telefone",False))
         else:
@@ -4986,6 +5070,7 @@ O ciclo transacional permanece no flow_worker. Este módulo coordena chamadas
 aos repositórios; não executa SQL, commit, rollback, HTTP ou escrita em cache.
 """
 
+from core.identidade_atendimento import conciliar_apos_cpf
 from core.etapas_pos_venda import (
     ETAPA_NOME, ETAPA_CPF, ETAPA_PRODUTO, ETAPA_ASSUNTO, EVENTO_PRODUTO_ESCOLHIDO,
     ETAPA_PEDIDOS, ETAPA_DETALHES, EVENTO_SITUACAO_INFORMADA, EVENTO_ASSUNTO_ESCOLHIDO,
@@ -5091,9 +5176,14 @@ def atualizar_banco_conforme_transicao_de_etapa(contexto, envio, cursor):
             cpf = envio["cpf_titular"]
             if len(cpf) != 11 or not cpf.isascii() or not cpf.isdigit():
                 raise ValueError("O efeito de CPF exige 11 dígitos ASCII já normalizados.")
-            atualizar_cpf_titular(contexto["id_cliente"], cpf, cursor)
+            resultado = conciliar_apos_cpf(contexto, cpf, cursor)
+            if resultado.cadastro_para_cpf is not None:
+                atualizar_cpf_titular(resultado.cadastro_para_cpf, cpf, cursor)
             atualizar_cpf_do_atendimento(contexto["id_conversa"], cpf, cursor)
-            return {"cpf_titular": cpf}
+            efeito = {"cpf_titular": cpf}
+            if resultado.cache:
+                efeito["cache_conciliacao"] = resultado.cache
+            return efeito
 
     # PRODUTO (3): pertence ao atendimento atual, nunca ao cadastro global.
     elif etapa == ETAPA_PRODUTO:
@@ -5181,13 +5271,19 @@ def aplicar_efeito_contato(ctx,envio,cursor):
     elif operacao == "repetir":
         repositorio.repetir_solicitacao(conversa,uid,envio["id_hash_msg_bot"],cursor)
     elif operacao == "confirmar":
-        if not repositorio.ler_solicitacao_para_confirmar(conversa,uid,cursor):
+        solicitacao = repositorio.ler_solicitacao_para_confirmar(conversa, uid, cursor)
+        if not solicitacao:
             raise ValueError("Solicitação já encerrada")
         telefone = envio["telefone_provado"]
         ident.serializar_chave(f"wa:{telefone}",cursor)
-        if ident.cliente_telefone(telefone,cursor) not in (None,ctx["id_cliente"]):
-            raise ValueError("Conciliação de cadastros necessária")
-        ident.definir_telefone(ctx["id_cliente"],telefone,cursor)
+        dono = ident.cliente_telefone(telefone, cursor)
+        if envio.get("telefone_em_outro_cadastro") or dono not in (None, ctx["id_cliente"]):
+            if solicitacao[1] != "cadastro":
+                raise ValueError("O telefone de reconfirmação pertence a outro cadastro.")
+            from core.repositories.atendimento.conciliacao_cliente import guardar_telefone_compartilhado
+            guardar_telefone_compartilhado(conversa, telefone, cursor)
+        else:
+            ident.definir_telefone(ctx["id_cliente"], telefone, cursor)
         ident.alias_confirmado(ctx["id_central"],uid,cursor)
         repositorio.encerrar_solicitacao(conversa,cursor)
     elif operacao=="encerrar":
@@ -5202,6 +5298,7 @@ import logging
 from core.cache.runtime.cache_conversas_bloqueadas import (
     registrar_bloqueio_conversa_cache,
 )
+from core.cache.runtime.cache_cliente import remover_cliente_cache, salvar_cliente_cache
 from core.logging_config import short_value
 from core.repositories.atendimento.fila import marcar_mensagem_como_enviada
 from workers.worker_flow.transacoes.encerramento_atendimento import (
@@ -5231,6 +5328,9 @@ def finalizar_mensagem_processada(
 
     marcar_mensagem_como_enviada(mensagem["id_mensagem"], cursor)
 
+    conciliacao = (contexto_final.get("efeitos_transicao") or {}).get("cache_conciliacao")
+    if conciliacao:
+        resultado_encerramento["cache_conciliacao"] = conciliacao
     return resultado_encerramento
 
 
@@ -5238,7 +5338,16 @@ def registrar_cache_bloqueio_apos_commit(
     mensagem,
     resultado_encerramento,
 ):
-    """Materializa no Redis somente bloqueios já confirmados no banco."""
+    """Publica o vínculo reconciliado ou o bloqueio somente depois do commit da fila."""
+    if conciliacao := resultado_encerramento.get("cache_conciliacao"):
+        for telefone in conciliacao["telefones_antigos"]:
+            remover_cliente_cache(telefone)
+        for central, uid in conciliacao["aliases_antigos"]:
+            remover_cliente_cache(uid, id_central=central, tipo="bsuid")
+        salvar_cliente_cache(conciliacao["telefone"], conciliacao["cliente"])
+        if conciliacao["uid"]:
+            salvar_cliente_cache(conciliacao["uid"], conciliacao["cliente"],
+                                 id_central=conciliacao["central"], tipo="bsuid")
     if not resultado_encerramento.get("atendimento_encerrado"):
         return False
 
@@ -5273,6 +5382,7 @@ def registrar_cache_bloqueio_apos_commit(
 """Resolve cliente, central e conversa sem enviar mensagens."""
 from core.cache.runtime.cache_cliente import buscar_cliente_cache
 from core.cache.cache_unidade import obter_id_unidade_redis_ou_plsql
+from core.repositories.atendimento.identidade_cliente import cliente_telefone
 from core.repositories.atendimento.clientes import inserindo_em_cliente_caso_seja_novo
 from core.repositories.atendimento.chats import garantir_chat_para_atendimento
 from core.repositories.atendimento.conversas import buscar_estado_conversa, inserindo_em_conversa_caso_seja_nova
@@ -5283,7 +5393,8 @@ from core.repositories.atendimento.fila import ler_identidade_fila
 
 def valida_cliente(telefone, cursor):
     id_cliente = buscar_cliente_cache(telefone)
-    if id_cliente:
+    # Uma fila legada pode sobreviver à troca de titular do telefone.
+    if id_cliente and cliente_telefone(telefone, cursor) == id_cliente:
         return id_cliente, False, False
     id_cliente, inserido = inserindo_em_cliente_caso_seja_novo(telefone, cursor)
     return id_cliente, inserido, True
@@ -6507,7 +6618,7 @@ class WorkerPostgresTests(unittest.TestCase):
             self.assertNotIn("01234567890", resumo)
             self.assertNotIn("João da Silva", resumo)
 
-    def test_contato_comprovado_reconcilia_conversa_provisoria_com_o_chat_antigo(self):
+    def test_par_exato_vence_cpf_igual_mais_recente(self):
         self.preparar_produto()
         self.encerrar_fixture_ha_91_dias()
         for texto in ("Oi", "Ana da Silva"):
@@ -6516,11 +6627,19 @@ class WorkerPostgresTests(unittest.TestCase):
         def ids():
             return self.adm.execute("SELECT id_cliente FROM chatbot.cliente ORDER BY id_cliente").fetchall()
         canonico, provisorio = ids()
+        duplicado = self.adm.execute("""
+            INSERT INTO chatbot.cliente (cpf_titular) VALUES ('01234567890') RETURNING id_cliente
+        """).fetchone()
         conversa = self.adm.execute("SELECT id_conversa FROM chatbot.conversa WHERE status_ativa").fetchone()
         telefone = "5511999990000"
         self.assertEqual(self.entrada_privada(cartao=True, telefone=telefone, assinada=False)["status"], "ignored")
-        self.assertEqual(ids(), [canonico, provisorio])
+        self.assertEqual(ids(), [canonico, provisorio, duplicado])
         self.assertEqual(self.entrada_privada(cartao=True, telefone=telefone, envelope_wa=telefone)["status"], "inserted")
+        self.ciclo()
+        self.assertEqual(ids(), [canonico, provisorio, duplicado])
+        self.assertIn("CPF do titular", self.wa.send_message.call_args.kwargs["text"])
+        self.assertEqual(self.adm.execute("SELECT nome_titular FROM chatbot.cliente WHERE id_cliente=%s", canonico).fetchone(), ("João da Silva",))
+        self.assertEqual(self.entrada_privada("Meu CPF é 012.345.678-90", envelope_wa=telefone)["status"], "inserted")
         self.ciclo()
         self.assertEqual(ids(), [canonico])
         self.assertEqual(self.adm.execute("SELECT id_conversa FROM chatbot.conversa WHERE status_ativa").fetchone(), conversa)
@@ -6528,11 +6647,228 @@ class WorkerPostgresTests(unittest.TestCase):
         self.assertEqual(self.adm.execute("SELECT DISTINCT id_cliente FROM chatbot.fila_mensagens WHERE user_id_origem IS NOT NULL").fetchall(), [canonico])
         self.assertEqual(self.adm.execute("SELECT id_cliente FROM chatbot.identidade_bsuid WHERE vigente").fetchone(), canonico)
         self.assertEqual(self.adm.execute("SELECT nome_titular,cpf_titular FROM chatbot.atendimento_pos_venda ORDER BY id_conversa").fetchall(),
-                         [("João da Silva", "01234567890"), ("Ana da Silva", None)])
-        self.assertIn("CPF do titular", self.wa.send_message.call_args.kwargs["text"])
-        self.entrada_privada("12345678901")
+                         [("João da Silva", "01234567890"), ("Ana da Silva", "01234567890")])
+        self.assertEqual(self.adm.execute("SELECT nome_titular FROM chatbot.cliente").fetchone(), ("Ana da Silva",))
+        self.entrada_privada("Móveis")
         self.ciclo()
-        self.assertEqual(self.adm.execute("SELECT cpf_titular FROM chatbot.cliente").fetchone(), ("12345678901",))
+        self.assertEqual(self.adm.execute("SELECT tipo_destinatario,valor_destinatario FROM chatbot.historico_mensagens WHERE quem_enviou='bot' ORDER BY id_mensagem DESC LIMIT 1").fetchone(), ("wa_id", telefone))
+
+    def conferir_vencedor_por_telefone(self, cpf_antigo):
+        self.preparar_produto()
+        self.encerrar_fixture_ha_91_dias()
+        self.adm.execute("UPDATE chatbot.cliente SET cpf_titular=%s", (cpf_antigo,))
+        antigo = self.adm.execute("SELECT id_cliente FROM chatbot.cliente").fetchone()[0]
+        self.adm.execute("""
+            INSERT INTO chatbot.identidade_bsuid (id_central,user_id,id_cliente,wamid_origem)
+            VALUES (2,'alias-anterior',%s,'wamid.anterior')
+        """, (antigo,))
+        telefone = "5511999990000"
+        for texto in ("Oi", "Ana da Silva"):
+            self.entrada_privada(texto)
+            self.ciclo()
+        self.entrada_privada(cartao=True, telefone=telefone, envelope_wa=telefone)
+        self.ciclo()
+        self.entrada_privada("inválido", envelope_wa=telefone)
+        self.ciclo()
+        self.assertEqual(self.adm.execute("SELECT count(*) FROM chatbot.cliente").fetchone(), (2,))
+        self.entrada_privada("12345678901", envelope_wa=telefone)
+        self.ciclo()
+        self.assertEqual(self.adm.execute("""
+            SELECT id_cliente,nome_titular,cpf_titular,waid_telefone,username FROM chatbot.cliente
+        """).fetchall(), [(antigo, "Ana da Silva", "12345678901", telefone, "ana.silva")])
+        self.assertEqual(self.adm.execute("""
+            SELECT a.nome_titular,a.cpf_titular,ch.id_cliente
+            FROM chatbot.atendimento_pos_venda a JOIN chatbot.conversa c USING(id_conversa)
+            JOIN chatbot.chat ch USING(id_chat) ORDER BY c.iniciou_em
+        """).fetchall(), [("João da Silva", "01234567890", antigo), ("Ana da Silva", "12345678901", antigo)])
+        self.assertEqual(self.adm.execute("""
+            SELECT vigente FROM chatbot.identidade_bsuid WHERE user_id='alias-anterior'
+        """).fetchone(), (False,))
+        for texto in ("Móveis", "Entrega", "Perdi a nota", "Quero saber a data"):
+            self.assertEqual(self.entrada_privada(texto, envelope_wa=telefone)["status"], "inserted")
+            self.ciclo()
+        self.assertEqual(self.adm.execute("""
+            SELECT tipo_destinatario,valor_destinatario FROM chatbot.historico_mensagens
+            WHERE quem_enviou='bot' ORDER BY id_mensagem DESC LIMIT 1
+        """).fetchone(), ("wa_id", telefone))
+        self.assertEqual(self.adm.execute("""
+            SELECT id_etapa_atual,status_ativa FROM chatbot.conversa ORDER BY id_conversa DESC LIMIT 1
+        """).fetchone(), (7, False))
+
+    def test_somente_telefone_igual_atualiza_cpf_e_preserva_historico(self):
+        self.conferir_vencedor_por_telefone("01234567890")
+
+    def test_somente_telefone_igual_preenche_cpf_anterior_ausente(self):
+        self.conferir_vencedor_por_telefone(None)
+
+    def test_desempate_em_dados_legados_respeita_grupo_e_exclui_provisorio(self):
+        from core.identidade_atendimento import escolher_cadastro_vencedor
+        cpf, tel = "01234567890", "5511999990000"
+        candidatos = [(50, None, tel, False), (10, "11111111111", tel, False), (30, None, tel, False)]
+        self.assertEqual(escolher_cadastro_vencedor(candidatos, 50, cpf, tel), 30)
+        candidatos.extend([(4, cpf, None, False), (9, cpf, "5575999990000", False)])
+        self.assertEqual(escolher_cadastro_vencedor(candidatos, 50, cpf, tel), 9)
+        candidatos.extend([(2, cpf, tel, False), (7, cpf, tel, False)])
+        self.assertEqual(escolher_cadastro_vencedor(candidatos, 50, cpf, tel), 7)
+
+    def test_numero_novo_e_mesmo_cpf_atualizam_a_ficha_antiga(self):
+        self.preparar_produto()
+        self.encerrar_fixture_ha_91_dias()
+        for texto in ("Oi", "Ana da Silva"):
+            self.entrada_privada(texto)
+            self.ciclo()
+        novo = "5575999991234"
+        self.entrada_privada(cartao=True, telefone=novo)
+        self.ciclo()
+        self.entrada_privada("01234567890")
+        self.ciclo()
+        self.assertEqual(self.adm.execute("SELECT waid_telefone, nome_titular FROM chatbot.cliente ORDER BY id_cliente").fetchall(),
+                         [(novo, "Ana da Silva")])
+        self.assertEqual(self.adm.execute("SELECT tipo_destinatario,valor_destinatario FROM chatbot.historico_mensagens WHERE quem_enviou='bot' ORDER BY id_mensagem DESC LIMIT 1").fetchone(), ("wa_id", novo))
+
+    def test_telefone_e_cpf_em_fichas_diferentes_reunem_historico_por_central(self):
+        self.preparar_produto()
+        self.encerrar_fixture_ha_91_dias()
+        telefone = "5511999990000"
+        cpf = "12345678901"
+        # O dono anterior do telefone teve atendimento com outro CPF.
+        antigo = self.adm.execute("SELECT id_conversa FROM chatbot.conversa").fetchone()[0]
+        mensagens = self.adm.execute("""
+            SELECT id_mensagem,id_hash_msg,received_data_hora FROM chatbot.historico_mensagens
+            WHERE id_conversa=%s ORDER BY id_mensagem
+        """, (antigo,)).fetchall()
+        def ficha(wa):
+            return self.adm.execute("""
+                INSERT INTO chatbot.cliente (cpf_titular,waid_telefone)
+                VALUES (%s,%s) RETURNING id_cliente
+            """, (cpf, wa)).fetchone()[0]
+
+        duplicado = ficha("557500000001")
+        vencedor = ficha("557500000002")
+        chat_outra_central = self.adm.execute("""
+            INSERT INTO chatbot.chat (id_cliente,id_central) VALUES (%s,2) RETURNING id_chat
+        """, (duplicado,)).fetchone()[0]
+        outra = self.adm.execute("""
+            INSERT INTO chatbot.conversa (id_chat,id_central,id_etapa_atual,status_ativa,
+                                          iniciou_em,finalizou_em,motivo_encerramento)
+            VALUES (%s,2,7,false,now()-interval '100 days',now()-interval '99 days','encaminhamento')
+            RETURNING id_conversa
+        """, (chat_outra_central,)).fetchone()[0]
+        self.adm.execute("""
+            INSERT INTO chatbot.identidade_bsuid (id_central,user_id,id_cliente,wamid_origem)
+            VALUES (1,'uid-antigo',%s,'wamid.antigo')
+        """, (vencedor,))
+        for texto in ("Oi", "Ana da Silva"):
+            self.entrada_privada(texto)
+            self.ciclo()
+        self.entrada_privada(cartao=True, telefone=telefone, envelope_wa=telefone)
+        self.ciclo()
+        atual = self.adm.execute("SELECT id_conversa FROM chatbot.conversa WHERE status_ativa").fetchone()[0]
+        self.entrada_privada(cpf, envelope_wa=telefone)
+        self.ciclo()
+        self.assertEqual(self.adm.execute("""
+            SELECT id_cliente,nome_titular,cpf_titular,waid_telefone FROM chatbot.cliente
+        """).fetchall(), [(vencedor, "Ana da Silva", cpf, telefone)])
+        self.assertEqual(self.adm.execute("SELECT username FROM chatbot.cliente").fetchone(), ("ana.silva",))
+        self.assertEqual(self.adm.execute("""
+            SELECT ch.id_cliente,ch.id_central,c.id_conversa FROM chatbot.chat ch
+            JOIN chatbot.conversa c USING(id_chat) ORDER BY ch.id_central,c.iniciou_em
+        """).fetchall(), [(vencedor, 1, antigo), (vencedor, 1, atual), (vencedor, 2, outra)])
+        self.assertEqual(self.adm.execute("""
+            SELECT id_mensagem,id_hash_msg,received_data_hora FROM chatbot.historico_mensagens
+            WHERE id_conversa=%s ORDER BY id_mensagem
+        """, (antigo,)).fetchall(), mensagens)
+        self.assertEqual(self.adm.execute("""
+            SELECT cpf_titular FROM chatbot.atendimento_pos_venda WHERE id_conversa=%s
+        """, (antigo,)).fetchone(), ("01234567890",))
+        self.assertEqual(self.adm.execute("""
+            SELECT id_cliente,vigente FROM chatbot.identidade_bsuid WHERE user_id='uid-antigo'
+        """).fetchone(), (vencedor, False))
+        self.entrada_privada("Móveis", envelope_wa=telefone)
+        self.ciclo()
+        self.assertEqual(self.adm.execute("""
+            SELECT id_etapa_atual FROM chatbot.conversa WHERE id_conversa=%s
+        """, (atual,)).fetchone(), (4,))
+
+    def test_rollback_da_fusao_e_replay_apos_commit(self):
+        from core.identidade_atendimento import conciliar_apos_cpf
+        from core.repositories.atendimento import conciliacao_cliente
+
+        self.preparar_produto()
+        self.encerrar_fixture_ha_91_dias()
+        for texto in ("Oi", "Ana da Silva"):
+            self.entrada_privada(texto)
+            self.ciclo()
+        telefone = "5511999990000"
+        self.entrada_privada(cartao=True, telefone=telefone)
+        self.ciclo()
+        cpf = "01234567890"
+        self.entrada_privada(cpf)
+        entrada = self.adm.execute("""
+            SELECT f.id_cliente,c.id_conversa,f.user_id_origem,f.id_mensagem,f.received_data_hora
+            FROM chatbot.fila_mensagens f JOIN chatbot.chat ch USING(id_cliente,id_central)
+            JOIN chatbot.conversa c USING(id_chat) WHERE c.status_ativa ORDER BY f.id_mensagem DESC LIMIT 1
+        """).fetchone()
+        origem, conversa, uid, fila, recebido = entrada
+        contexto = {"id_cliente": origem, "id_conversa": conversa, "id_central": 1,
+                    "id_phone_unidade": "999", "bsuid_vigente": uid, "telefone_compartilhado": telefone,
+                    "mensagem_cliente_atual": {"id_mensagem_fila": fila, "received_data_hora": recebido}}
+        def estado():
+            return tuple(self.adm.execute(consulta).fetchall() for consulta in (
+                "SELECT * FROM chatbot.cliente ORDER BY id_cliente",
+                "SELECT * FROM chatbot.chat ORDER BY id_chat",
+                "SELECT id_conversa,id_chat FROM chatbot.conversa ORDER BY id_conversa",
+                "SELECT id_mensagem,id_cliente FROM chatbot.fila_mensagens ORDER BY id_mensagem",
+                "SELECT * FROM chatbot.identidade_bsuid ORDER BY id_central,user_id",
+                "SELECT telefone_compartilhado FROM chatbot.atendimento_pos_venda ORDER BY id_conversa",
+            ))
+        anterior = estado()
+        with self.assertRaisesRegex(RuntimeError, "falha simulada"):
+            with self.adm.transaction(), self.adm.cursor() as cursor:
+                with patch.object(conciliacao_cliente, "excluir_cadastros_redundantes",
+                                  side_effect=RuntimeError("falha simulada")):
+                    conciliar_apos_cpf(contexto, cpf, cursor)
+        self.assertEqual(estado(), anterior)
+
+        # O próximo ciclo perde a finalização da fila, depois do commit dos efeitos.
+        self.ciclo(finalizar_mensagem_processada=RuntimeError("queda após o commit"))
+        confirmado = estado()
+        self.assertEqual(len(confirmado[0]), 1)
+        envios = self.wa.send_message.call_count
+        self.adm.execute("UPDATE chatbot.fila_mensagens SET next_attempt_at=now() WHERE id_mensagem=%s", (fila,))
+        self.ciclo()
+        self.assertEqual(estado(), confirmado)
+        self.assertEqual(self.wa.send_message.call_count, envios)
+        self.assertEqual(self.adm.execute("SELECT status FROM chatbot.fila_mensagens WHERE id_mensagem=%s",
+                                          (fila,)).fetchone(), ("sent",))
+
+    def test_migracao_conferencia_cpf_reaplicavel_com_duplicados(self):
+        self.adm.execute("INSERT INTO chatbot.cliente (cpf_titular) VALUES ('01234567890'),('01234567890')")
+        self.adm.execute("DROP INDEX chatbot.cliente_cpf_conciliacao")
+        self.adm.execute("ALTER TABLE chatbot.atendimento_pos_venda DROP COLUMN telefone_compartilhado")
+        sql = (ROOT / "deploy/migrations/20261127_contato_conferencia_cpf.sql").read_text(encoding="utf8")
+        self.adm.execute(sql)
+        self.adm.execute(sql)
+        self.assertTrue(self.adm.execute(
+            "SELECT to_regclass('chatbot.cliente_cpf_conciliacao') IS NOT NULL"
+        ).fetchone()[0])
+        self.assertEqual(self.adm.execute("SELECT count(*) FROM chatbot.cliente").fetchone(), (2,))
+
+    def test_encaminhamento_antes_do_cpf_preserva_o_dono_do_telefone(self):
+        self.preparar_produto()
+        self.encerrar_fixture_ha_91_dias()
+        for texto in ("Oi", "Ana da Silva"):
+            self.entrada_privada(texto)
+            self.ciclo()
+        telefone = "5511999990000"
+        self.entrada_privada(cartao=True, telefone=telefone)
+        self.ciclo()
+        self.assertEqual(self.entrada_privada("01234567890", assinada=False)["status"], "ignored")
+        self.entrada_privada("Quero falar com um humano", envelope_wa=telefone)
+        self.ciclo()
+        self.assertEqual(self.adm.execute("SELECT nome_titular,cpf_titular FROM chatbot.cliente ORDER BY id_cliente").fetchall(),
+                         [("João da Silva", "01234567890"), ("Ana da Silva", None)])
+        self.assertEqual(self.adm.execute("SELECT id_etapa_atual,status_ativa FROM chatbot.conversa ORDER BY id_conversa DESC LIMIT 1").fetchone(), (7, False))
 
     def test_contato_comprovado_respeita_bloqueio_vigente_do_cadastro_antigo(self):
         self.preparar_produto()
@@ -6550,8 +6886,10 @@ class WorkerPostgresTests(unittest.TestCase):
             self.entrada_privada(texto)
             self.ciclo()
         eventos = self.adm.execute("SELECT id_conversa,id_chat FROM chatbot.conversa ORDER BY id_conversa").fetchall()
-        self.assertEqual(self.entrada_privada(cartao=True, telefone="5511999990000")["reason"],
-                         "contato_exige_conciliacao")
+        self.assertEqual(self.entrada_privada(cartao=True, telefone="5511999990000")["status"], "inserted")
+        self.ciclo()
+        self.entrada_privada("01234567890")
+        self.ciclo()
         self.assertEqual(self.adm.execute("SELECT id_conversa,id_chat FROM chatbot.conversa ORDER BY id_conversa").fetchall(), eventos)
         self.assertEqual(self.adm.execute("SELECT count(*) FROM chatbot.cliente").fetchone(), (2,))
 
@@ -7510,6 +7848,8 @@ class Cliente(models.Model):
     class Meta:
         managed = False
         db_table = "cliente"
+        indexes = [models.Index(fields=["cpf_titular", "id_cliente"], name="cliente_cpf_conciliacao",
+                                condition=models.Q(cpf_titular__isnull=False))]
 
 
 class ContatoInterno(models.Model):
@@ -7597,6 +7937,7 @@ class AtendimentoPosVenda(models.Model):
     detalhes = models.TextField(null=True)
     encaminhado_moveis = models.CharField(null=True)
     encaminhado_sofas = models.CharField(null=True)
+    telefone_compartilhado = models.CharField(null=True, editable=False)
 
     class Meta:
         managed = False
@@ -9932,81 +10273,169 @@ def atualizar_cpf_titular(id_cliente, cpf_titular, cursor):
 ## 77. `core/repositories/atendimento/conciliacao_cliente.py` (aplicar)
 
 ```python
-"""Reassociação comprovada de uma conversa provisória, na transação do webhook."""
+"""Prova do telefone por conversa e reassociação do cadastro provisório."""
 
 
-def localizar_conversa_provisoria(central, provisoria, uid, cursor):
-    """Só uma ficha sem telefone nem outros atendimentos pode ser absorvida."""
+def guardar_telefone_compartilhado(conversa, telefone, cursor):
+    """Um valor nulo encerra a conferência após a fusão."""
     cursor.execute("""
-        SELECT c.id_conversa, ch.id_chat FROM chatbot.cliente cl
-        JOIN chatbot.chat ch USING (id_cliente)
+        UPDATE chatbot.atendimento_pos_venda SET telefone_compartilhado=%s
+        WHERE id_conversa=%s
+    """, (telefone, conversa))
+
+
+def telefone_em_conferencia(central, uid, cursor):
+    """Prova oficial mantida somente para o atendimento ativo desse BSUID."""
+    cursor.execute("""
+        SELECT a.telefone_compartilhado FROM chatbot.identidade_bsuid i
+        JOIN chatbot.chat ch USING (id_cliente, id_central)
         JOIN chatbot.conversa c USING (id_chat)
-        JOIN chatbot.solicitacao_contato s USING (id_conversa)
-        JOIN chatbot.identidade_bsuid a ON a.id_cliente=cl.id_cliente AND a.id_central=ch.id_central
-        WHERE cl.id_cliente=%s AND cl.waid_telefone IS NULL AND ch.id_central=%s
-          AND c.status_ativa AND s.motivo='cadastro' AND s.bsuid_destino=%s
-          AND a.user_id=s.bsuid_destino AND a.vigente AND NOT a.suspender_telefone
-          AND NOT EXISTS (SELECT FROM chatbot.identidade_bsuid b WHERE b.id_cliente=cl.id_cliente
-                          AND (b.id_central,b.user_id)<>(a.id_central,a.user_id))
-          AND NOT EXISTS (SELECT FROM chatbot.chat outro WHERE outro.id_cliente=cl.id_cliente
-                          AND outro.id_chat<>ch.id_chat)
-          AND NOT EXISTS (SELECT FROM chatbot.conversa outra WHERE outra.id_chat=ch.id_chat
-                          AND outra.id_conversa<>c.id_conversa)
-        FOR UPDATE OF cl, ch, c, s, a
-    """, (provisoria, central, uid))
-    return cursor.fetchone()
+        JOIN chatbot.atendimento_pos_venda a USING (id_conversa)
+        WHERE i.id_central=%s AND i.user_id=%s AND i.vigente AND NOT i.suspender_telefone
+          AND c.status_ativa AND a.telefone_compartilhado IS NOT NULL
+    """, (central, uid))
+    row = cursor.fetchone()
+    return row[0] if row else None
 
 
-def tem_conversa_ativa(id_chat, cursor):
-    cursor.execute("SELECT EXISTS (SELECT FROM chatbot.conversa WHERE id_chat=%s AND status_ativa)", (id_chat,))
+def candidatos_para_cpf(origem, cpf, telefone, conversa, cursor):
+    """O ID sequencial desempata fichas com a mesma prioridade."""
+    cursor.execute("""
+        SELECT cl.id_cliente, cl.cpf_titular, cl.waid_telefone,
+               cl.id_cliente=%s AND EXISTS (
+                   SELECT FROM chatbot.chat ch JOIN chatbot.conversa c USING (id_chat)
+                   WHERE ch.id_cliente=cl.id_cliente AND c.id_conversa<>%s
+               ) AS origem_com_historico
+        FROM chatbot.cliente cl
+        WHERE cl.id_cliente=%s OR cl.cpf_titular=%s OR cl.waid_telefone=%s
+        ORDER BY cl.id_cliente FOR UPDATE OF cl
+    """, (origem, conversa, origem, cpf, telefone))
+    return cursor.fetchall()
+
+
+def bloquear_chats(clientes, cursor):
+    cursor.execute("""
+        SELECT id_chat, id_cliente, id_central FROM chatbot.chat
+        WHERE id_cliente=ANY(%s) ORDER BY id_chat FOR UPDATE
+    """, (clientes,))
+    cursor.fetchall()
+
+
+def bloquear_aliases(clientes, cursor):
+    cursor.execute("""
+        SELECT id_central, user_id, id_cliente, vigente, suspender_telefone
+        FROM chatbot.identidade_bsuid WHERE id_cliente=ANY(%s)
+        ORDER BY id_central, user_id FOR UPDATE
+    """, (clientes,))
+    return cursor.fetchall()
+
+
+def ha_trabalho_em_andamento(clientes, telefones, conversa, fila, cursor):
+    cursor.execute("""
+        SELECT EXISTS (
+            SELECT FROM chatbot.conversa c JOIN chatbot.chat ch USING (id_chat)
+            WHERE ch.id_cliente=ANY(%s) AND c.id_conversa<>%s AND (c.status_ativa OR c.processing)
+        ) OR EXISTS (
+            SELECT FROM chatbot.fila_mensagens f
+            LEFT JOIN chatbot.conversa c USING (id_conversa)
+            LEFT JOIN chatbot.chat ch USING (id_chat)
+            WHERE (f.id_cliente=ANY(%s) OR ch.id_cliente=ANY(%s)
+                   OR (f.id_cliente IS NULL AND f.cliente_telefone=ANY(%s)))
+              AND f.id_mensagem<>%s AND f.status IN ('pending','processing')
+        )
+    """, (clientes, conversa, clientes, clientes, telefones, fila))
     return cursor.fetchone()[0]
 
 
-def obter_chat_canonico(cliente, central, cursor):
+def identificador_bloqueado(telefones, clientes, cursor):
     cursor.execute("""
-        INSERT INTO chatbot.chat (id_cliente,id_central) VALUES (%s,%s)
-        ON CONFLICT (id_cliente,id_central) DO UPDATE SET id_cliente=EXCLUDED.id_cliente
-        RETURNING id_chat
-    """, (cliente, central))
+        SELECT EXISTS (SELECT FROM chatbot.contato_interno WHERE waid_telefone=ANY(%s))
+            OR EXISTS (SELECT FROM chatbot.cliente_bloqueado_meta b
+                       WHERE b.wa_id_cliente=ANY(%s) OR EXISTS (
+                           SELECT FROM chatbot.identidade_bsuid a WHERE a.id_cliente=ANY(%s)
+                             AND a.id_central=b.id_central AND a.user_id=b.wa_id_cliente))
+    """, (telefones, telefones, clientes))
     return cursor.fetchone()[0]
 
 
-def mover_conversa(conversa, chat, cursor):
-    cursor.execute("UPDATE chatbot.conversa SET id_chat=%s WHERE id_conversa=%s", (chat, conversa))
-
-
-def mover_alias(provisoria, canonica, central, uid, cursor):
+def ha_bloqueio_temporario(clientes, cursor):
     cursor.execute("""
-        UPDATE chatbot.identidade_bsuid SET id_cliente=%s
-        WHERE id_cliente=%s AND id_central=%s AND user_id=%s AND vigente
-    """, (canonica, provisoria, central, uid))
+        SELECT EXISTS (
+            SELECT FROM chatbot.chat ch JOIN chatbot.conversa c USING (id_chat)
+            JOIN chatbot.etapa e ON e.id_etapa=c.id_etapa_atual
+            WHERE ch.id_cliente=ANY(%s) AND NOT c.status_ativa
+              AND c.motivo_encerramento IS DISTINCT FROM 'visita_pendente'
+              AND e.bloqueio_dias>0 AND c.finalizou_em + e.bloqueio_dias * interval '1 day' > now()
+        )
+    """, (clientes,))
+    return cursor.fetchone()[0]
 
 
-def mover_fila(provisoria, canonica, cursor):
-    cursor.execute("UPDATE chatbot.fila_mensagens SET id_cliente=%s WHERE id_cliente=%s", (canonica, provisoria))
-
-
-def atualizar_cadastro_pela_conversa(conversa, provisoria, canonica, cursor):
-    # Nome é o confirmado nesta compra. O novo CPF será confirmado no turno seguinte.
+def garantir_chats_do_vencedor(vencedor, perdedores, cursor):
     cursor.execute("""
-        UPDATE chatbot.cliente cl SET nome_titular=a.nome_titular,
-            username=CASE WHEN p.username_observado_em IS NOT NULL AND
-                (cl.username_observado_em IS NULL OR p.username_observado_em>cl.username_observado_em)
-                THEN p.username ELSE cl.username END,
-            username_observado_em=greatest(cl.username_observado_em,p.username_observado_em)
-        FROM chatbot.atendimento_pos_venda a, chatbot.cliente p
-        WHERE cl.id_cliente=%s AND a.id_conversa=%s AND p.id_cliente=%s
-    """, (canonica, conversa, provisoria))
+        INSERT INTO chatbot.chat (id_cliente, id_central)
+        SELECT DISTINCT %s::integer, id_central FROM chatbot.chat WHERE id_cliente=ANY(%s)
+        ON CONFLICT (id_cliente,id_central) DO NOTHING
+    """, (vencedor, perdedores))
 
 
-def excluir_chat_provisorio(chat, cliente, cursor):
-    cursor.execute("DELETE FROM chatbot.chat WHERE id_chat=%s AND id_cliente=%s", (chat, cliente))
+def mover_fila(perdedores, vencedor, cursor):
+    cursor.execute("""
+        UPDATE chatbot.fila_mensagens f SET id_cliente=%s WHERE f.id_cliente=ANY(%s)
+            OR (f.id_cliente IS NULL AND EXISTS (
+                SELECT FROM chatbot.conversa c JOIN chatbot.chat ch USING (id_chat)
+                WHERE c.id_conversa=f.id_conversa AND ch.id_cliente=ANY(%s)))
+    """, (vencedor, perdedores, perdedores))
 
 
-def excluir_cliente_provisorio(cliente, cursor):
-    cursor.execute("DELETE FROM chatbot.cliente WHERE id_cliente=%s AND waid_telefone IS NULL", (cliente,))
+def mover_conversas(perdedores, vencedor, cursor):
+    cursor.execute("""
+        UPDATE chatbot.conversa c SET id_chat=destino.id_chat
+        FROM chatbot.chat origem JOIN chatbot.chat destino USING (id_central)
+        WHERE c.id_chat=origem.id_chat AND origem.id_cliente=ANY(%s) AND destino.id_cliente=%s
+    """, (perdedores, vencedor))
+
+
+def mover_aliases(perdedores, vencedor, cursor):
+    cursor.execute("""
+        UPDATE chatbot.identidade_bsuid SET id_cliente=%s WHERE id_cliente=ANY(%s)
+    """, (vencedor, perdedores))
+
+
+def liberar_telefone(perdedores, telefone, cursor):
+    cursor.execute("""
+        UPDATE chatbot.cliente SET waid_telefone=NULL WHERE id_cliente=ANY(%s) AND waid_telefone=%s
+    """, (perdedores, telefone))
+
+
+def atualizar_cadastro_pela_conversa(conversa, vencedor, telefone, cursor):
+    """Somente um perfil observado nesta conversa pode substituir o do vencedor."""
+    cursor.execute("""
+        UPDATE chatbot.cliente cl SET nome_titular=a.nome_titular, waid_telefone=%s,
+            username=CASE WHEN perfil.observado_em IS NOT NULL AND
+                (cl.username_observado_em IS NULL OR perfil.observado_em>=cl.username_observado_em)
+                THEN perfil.username ELSE cl.username END,
+            username_observado_em=greatest(cl.username_observado_em, perfil.observado_em)
+        FROM chatbot.atendimento_pos_venda a LEFT JOIN LATERAL (
+            SELECT f.username_origem AS username, f.received_data_hora AS observado_em
+            FROM chatbot.fila_mensagens f WHERE f.id_conversa=a.id_conversa
+              AND nullif(btrim(f.username_origem),'') IS NOT NULL
+            ORDER BY f.received_data_hora DESC, f.id_mensagem DESC LIMIT 1
+        ) perfil ON true
+        WHERE cl.id_cliente=%s AND a.id_conversa=%s
+    """, (telefone, vencedor, conversa))
     if cursor.rowcount != 1:
-        raise ValueError("O cadastro provisório mudou durante a conciliação.")
+        raise ValueError("Dados da conversa ausentes ao consolidar o cadastro.")
+
+
+def excluir_chats_vazios(perdedores, cursor):
+    cursor.execute("DELETE FROM chatbot.chat WHERE id_cliente=ANY(%s)", (perdedores,))
+
+
+def excluir_cadastros_redundantes(perdedores, cursor):
+    cursor.execute("DELETE FROM chatbot.cliente WHERE id_cliente=ANY(%s)", (perdedores,))
+    if cursor.rowcount != len(perdedores):
+        raise ValueError("Um dos cadastros mudou durante a conciliação.")
 ```
 
 ## 78. `deploy/migrations/20261126_recoleta_titular.sql` (aplicar)
@@ -12449,4 +12878,19 @@ class ConsultasRelacionadasMixin:
 </table>
 <p>{% if pagina.has_previous %}<a href="?p={{ pagina.previous_page_number }}">Anterior</a> · {% endif %}Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}{% if pagina.has_next %} · <a href="?p={{ pagina.next_page_number }}">Próxima</a>{% endif %}</p>
 {% endblock %}
+```
+
+## 101. `deploy/migrations/20261127_contato_conferencia_cpf.sql`
+
+```sql
+-- A prova de contato fica na conversa até o CPF ser informado.
+-- Aplicar antes da revisão que lê esta coluna. Atendimentos anteriores ficam com NULL.
+BEGIN;
+SET LOCAL lock_timeout = '8s';
+ALTER TABLE chatbot.atendimento_pos_venda
+    ADD COLUMN IF NOT EXISTS telefone_compartilhado varchar
+    CHECK (telefone_compartilhado ~ '^[1-9][0-9]{0,14}$');
+CREATE INDEX IF NOT EXISTS cliente_cpf_conciliacao
+    ON chatbot.cliente (cpf_titular, id_cliente) WHERE cpf_titular IS NOT NULL;
+COMMIT;
 ```

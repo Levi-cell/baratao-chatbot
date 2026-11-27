@@ -35,7 +35,8 @@ def flow_sender(contexto_historico):
         ctx = dict(contexto_historico, destinatario_envio=valor)
         if pendencia:
             envio = resolver_turno_contato(ctx)
-        elif uid and not telefone and ctx["id_etapa_atual"] != ETAPA_NOME:
+        elif (uid and not telefone and ctx["id_etapa_atual"] != ETAPA_NOME
+              and (not ctx.get("telefone_compartilhado") or ctx.get("reconfirmar_telefone"))):
             envio = pedir(ctx, ctx["id_etapa_atual"], ctx["cadastro"].get("nome_titular"),
                           reconfirmar=ctx.get("reconfirmar_telefone",False))
         else:

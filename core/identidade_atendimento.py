@@ -1,6 +1,9 @@
 """Resolução do cliente sob o lock de cada identificador apresentado pela Meta."""
+from dataclasses import dataclass
+
 from core.repositories.atendimento import conciliacao_cliente as conciliacao
 from core.repositories.atendimento import identidade_cliente as repo
+from core.repositories.seguranca.turno_cliente import avaliar_turno_cliente_para_fila
 
 
 class IdentidadeDivergente(ValueError):
@@ -57,26 +60,96 @@ def rotacionar_bsuid(central, sistema, wamid, cursor):
     repo.trocar_bsuid_pendente(central,anterior,novo,cursor)
     return True
 
-def conciliar_contato_comprovado(dados, provisoria, canonica, uid, cursor):
-    """Turnos e identificadores estão serializados pelo ingresso. Preserva a conversa original."""
-    central = dados["id_central"]
-    if repo.alias_vigente_do_cliente(central, canonica, cursor):
-        return False
-    origem = conciliacao.localizar_conversa_provisoria(central, provisoria, uid, cursor)
-    if not origem:
-        return False
-    conversa, chat_provisorio = origem
-    chat = conciliacao.obter_chat_canonico(canonica, central, cursor)
-    if conciliacao.tem_conversa_ativa(chat, cursor):
-        return False
-    # Um turno no chat antigo pode ter acabado entre a primeira consulta e este lock.
-    telefone = dados["interativo"]["_telefone_verificado"]
-    if repo.impedimento(central, canonica, [telefone, uid], cursor):
-        return False
-    conciliacao.mover_conversa(conversa, chat, cursor)
-    conciliacao.mover_alias(provisoria, canonica, central, uid, cursor)
-    conciliacao.mover_fila(provisoria, canonica, cursor)
-    conciliacao.atualizar_cadastro_pela_conversa(conversa, provisoria, canonica, cursor)
-    conciliacao.excluir_chat_provisorio(chat_provisorio, provisoria, cursor)
-    conciliacao.excluir_cliente_provisorio(provisoria, cursor)
-    return True
+
+@dataclass(frozen=True)
+class ResultadoConciliacao:
+    # Sem ID global, o CPF é guardado somente no atendimento deste turno.
+    cadastro_para_cpf: int | None
+    cache: dict | None = None
+
+
+def escolher_cadastro_vencedor(candidatos, origem, cpf, telefone):
+    """Compara dados anteriores à etapa 2. O maior ID desempata cada grupo."""
+    prioridades = []
+    for cliente, cpf_anterior, wa, tem_historico in candidatos:
+        if cliente == origem and cpf_anterior is None and not tem_historico:
+            continue  # O provisório não disputa o desempate com as fichas antigas.
+        mesmo_cpf = cpf_anterior == cpf
+        mesmo_telefone = wa == telefone
+        if mesmo_cpf or mesmo_telefone:
+            prioridades.append((mesmo_cpf, mesmo_telefone, cliente))
+    return max(prioridades)[2] if prioridades else origem
+
+
+def conciliar_apos_cpf(contexto, cpf, cursor):
+    """Decide antes de gravar o CPF novo. Os efeitos usam a transação do worker."""
+    origem = contexto["id_cliente"]
+    telefone = contexto.get("telefone_compartilhado") or contexto.get("wa_id_confirmado")
+    if not telefone:
+        return ResultadoConciliacao(origem)
+
+    central = contexto["id_central"]
+    conversa = contexto["id_conversa"]
+    uid = contexto.get("bsuid_vigente")
+    if uid:
+        repo.serializar_chave(f"bs:{central}:{uid}", cursor)
+    repo.serializar_chave(f"cpf:{cpf}", cursor)
+    repo.serializar_chave(f"wa:{telefone}", cursor)
+    candidatos = conciliacao.candidatos_para_cpf(origem, cpf, telefone, conversa, cursor)
+    vencedor = escolher_cadastro_vencedor(candidatos, origem, cpf, telefone)
+    telefones = {cliente: wa for cliente, _, wa, _ in candidatos}
+    perdedores = [cliente for cliente in telefones if cliente != vencedor]
+    if not perdedores:
+        return ResultadoConciliacao(vencedor)
+
+    clientes = list(telefones)
+    conciliacao.bloquear_chats(clientes, cursor)
+    aliases = conciliacao.bloquear_aliases(clientes, cursor)
+    if uid and (central, uid, origem, True, False) not in aliases:
+        return ResultadoConciliacao(None)
+    if contexto.get("telefone_compartilhado"):
+        if conciliacao.telefone_em_conferencia(central, uid, cursor) != telefone:
+            return ResultadoConciliacao(None)
+    elif telefones.get(origem) != telefone:
+        return ResultadoConciliacao(None)
+
+    entrada = contexto["mensagem_cliente_atual"]
+    numeros_envolvidos = sorted({wa for wa in telefones.values() if wa} | {telefone})
+    if (conciliacao.identificador_bloqueado(numeros_envolvidos, clientes, cursor)
+            or conciliacao.ha_bloqueio_temporario(clientes, cursor)
+            or conciliacao.ha_trabalho_em_andamento(clientes, numeros_envolvidos, conversa,
+                                                   entrada["id_mensagem_fila"], cursor)):
+        return ResultadoConciliacao(None)
+    for cliente in clientes:
+        if cliente != origem:
+            turno = avaliar_turno_cliente_para_fila(cursor, cliente, contexto["id_phone_unidade"],
+                                                   entrada["received_data_hora"], usar_lock=True)
+            if not turno["pode_enfileirar"]:
+                return ResultadoConciliacao(None)
+
+    # Um BSUID histórico não pode encaminhar outro remetente ao telefone novo.
+    # Conserve vínculos vigentes do vencedor em outras centrais se CPF e telefone coincidem.
+    mesmo_titular_e_numero = any(cliente == vencedor and anterior == cpf and wa == telefone
+                                 for cliente, anterior, wa, _ in candidatos)
+    aposentados = []
+    for c, u, dono, ativo, _ in aliases:
+        rota_atual = (c, u, dono) == (central, uid, origem)
+        outra_central_preservada = c != central and dono == vencedor and mesmo_titular_e_numero
+        if ativo and not (rota_atual or outra_central_preservada):
+            repo.aposentadoria_alias(c, u, cursor)
+            aposentados.append((c, u))
+
+    conciliacao.garantir_chats_do_vencedor(vencedor, perdedores, cursor)
+    conciliacao.mover_fila(perdedores, vencedor, cursor)
+    conciliacao.mover_conversas(perdedores, vencedor, cursor)
+    conciliacao.mover_aliases(perdedores, vencedor, cursor)
+    conciliacao.liberar_telefone(perdedores, telefone, cursor)
+    conciliacao.atualizar_cadastro_pela_conversa(conversa, vencedor, telefone, cursor)
+    conciliacao.guardar_telefone_compartilhado(conversa, None, cursor)
+    conciliacao.excluir_chats_vazios(perdedores, cursor)
+    conciliacao.excluir_cadastros_redundantes(perdedores, cursor)
+    return ResultadoConciliacao(vencedor, {
+        "cliente": vencedor, "telefone": telefone, "central": central, "uid": uid,
+        "telefones_antigos": [wa for wa in telefones.values() if wa and wa != telefone],
+        "aliases_antigos": aposentados,
+    })
