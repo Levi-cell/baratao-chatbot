@@ -2,40 +2,9 @@
 
 import re
 
+from core.etapas_pos_venda import ETAPA_PEDIDOS, ETAPA_PRODUTO
 from core.integrations.whatsapp.messages.etapa3_messages import BOTOES_PRODUTO
-
-from core.integrations.whatsapp.messages.etapa18_messages import (
-    montar_botoes_etapa18,
-    montar_opcoes_etapa18,
-)
-from core.integrations.whatsapp.messages.etapa19_messages import TITULO_BOTAO_COMERCIAL
-
-from core.integrations.whatsapp.messages.etapa7_messages import montar_botoes_etapa7
-from core.integrations.whatsapp.messages.etapa9_messages import montar_botoes_etapa9
-from core.integrations.whatsapp.messages.etapa11_messages import montar_botoes_etapa11
-from core.integrations.whatsapp.messages.etapa20_messages import montar_botoes_etapa20
-from core.integrations.whatsapp.messages.etapa21_messages import montar_opcoes_satisfacao_etapa21
-from core.integrations.whatsapp.messages.etapa22_messages import montar_botoes_etapa22
-from core.integrations.whatsapp.messages.triagem_componentes import montar_botoes_triagem
-
-
-_BOTOES_POR_ETAPA = {
-    3: lambda: [titulo for titulo, _ in BOTOES_PRODUTO],
-    7: montar_botoes_etapa7,
-    9: montar_botoes_etapa9,
-    11: montar_botoes_etapa11,
-    12: montar_botoes_triagem,
-    13: montar_botoes_triagem,
-    14: montar_botoes_triagem,
-    15: montar_botoes_triagem,
-    16: montar_botoes_triagem,
-    17: montar_botoes_triagem,
-    18: montar_botoes_etapa18,
-    19: lambda: [TITULO_BOTAO_COMERCIAL],
-    20: montar_botoes_etapa20,
-    21: lambda: [titulo for _, titulo in montar_opcoes_satisfacao_etapa21()],
-    22: montar_botoes_etapa22,
-}
+from core.integrations.whatsapp.messages.etapa5_pedidos_messages import BOTAO_NOTA_PERDIDA
 
 
 # Ordem e grafia do modelo CSV distribuído pelo Google Contacts.
@@ -83,10 +52,30 @@ def botoes_para_mensagem(mensagem):
     tipo = str(mensagem.get('tipo') or '')
     if mensagem.get('quem_enviou') != 'bot' or not tipo.startswith('interactive'):
         return []
-    if mensagem.get('id_etapa') == 18 and tipo == 'interactive_list':
-        return montar_opcoes_etapa18()
-    fabrica = _BOTOES_POR_ETAPA.get(mensagem.get('id_etapa'))
-    return list(fabrica()) if fabrica else []
+    interativo = mensagem.get('interativo') or {}
+    acao = interativo.get('action') or {}
+    if acao:
+        if acao.get('buttons'):
+            return [botao['reply']['title'] for botao in acao['buttons'] if botao.get('reply', {}).get('title')]
+        if acao.get('sections'):
+            return [linha['title'] for secao in acao['sections'] for linha in secao.get('rows', []) if linha.get('title')]
+        if acao.get('parameters', {}).get('display_text'):
+            return [acao['parameters']['display_text']]
+        if acao.get('cards'):
+            rotulos = []
+            for card in acao['cards']:
+                parametros = card.get('action', {}).get('parameters', {})
+                rotulo = parametros.get('display_text') or card.get('body', {}).get('text')
+                if rotulo:
+                    rotulos.append(rotulo)
+            return rotulos
+        return []
+    # Respostas anteriores à gravação do payload interativo.
+    if mensagem.get('id_etapa') == ETAPA_PRODUTO:
+        return [titulo for titulo, _ in BOTOES_PRODUTO]
+    if mensagem.get('id_etapa') == ETAPA_PEDIDOS:
+        return [BOTAO_NOTA_PERDIDA]
+    return []
 
 
 def classificar_faixa(idade):
@@ -108,7 +97,6 @@ def _perfil_resumido(status_dependente, faixa):
 
 
 def consolidar_conversas(linhas):
-    from core.integrations.fireads.atribuicao import ler
     # Defesa adicional para consumidores que não passaram pela seleção SQL.
     representantes = {}
     historico = {}
@@ -126,8 +114,8 @@ def consolidar_conversas(linhas):
             'id_conversa_atual': linha['id_conversa'],
             'destinatario': ('dependente' if linha.get('status_dependente') is True else
                              'titular' if linha.get('status_dependente') is False else None),
-            'origem': ler(linha.get('contexto_fireads'), linha['id_conversa'], linha.get('dados_consulta')),
-            'nome': linha.get('nome_cliente') or 'Cliente sem nome',
+            'origem': linha.get('origem'),
+            'nome': nome_exibido_no_painel(linha.get('nome_cliente'), linha.get('username')),
             'contato': linha.get('waid_telefone') or '',
             'email': linha.get('email') or '',
             'profissao': linha.get('profissao_cliente') or linha.get('profissao_conversa') or '',
@@ -269,3 +257,11 @@ def montar_relatorio(
         'etapas': etapas,
         'atividade': atividade,
     }
+
+
+def nome_exibido_no_painel(nome_titular, username):
+    if nome_titular:
+        return nome_titular
+    if username:
+        return f"@{username.lstrip('@')}"
+    return "Contato não compartilhado"

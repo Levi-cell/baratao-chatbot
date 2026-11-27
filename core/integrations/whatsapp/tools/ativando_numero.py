@@ -9,14 +9,17 @@ from core.integrations.whatsapp.tools.config import (
     get_phone_registration_pin,
     get_token_usuario_meta,
 )
+from core.integrations.whatsapp.remetente import recurso_registro_meta
 from core.logging_config import short_value
 
 
 logger = logging.getLogger("whatsapp.registro")
 
 
-def registrar_numero_whatsapp(phone_number_id, pin=None):
-    url = construir_url_graph_api(f"{phone_number_id}/register")
+def registrar_numero_whatsapp(phone_number_id, pin=None, *, id_registro=None):
+    # No cadastro o recurso validado ainda não está disponível no banco.
+    recurso = id_registro or recurso_registro_meta(phone_number_id)
+    url = construir_url_graph_api(f"{recurso}/register")
 
     headers = {
         "Authorization": f"Bearer {get_token_usuario_meta()}",
@@ -56,7 +59,7 @@ def _normalizar_resposta(response):
 
     except ValueError:
         return {
-            "success": response.ok,
+            "success": False,
             "text": response.text,
         }
 

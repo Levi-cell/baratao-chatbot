@@ -6,17 +6,18 @@ from core.database.connection_aws import get_conn
 from core.integrations.whatsapp.tools.usuarios import bloquear_usuario_meta
 from core.logging_config import short_value
 from core.repositories.seguranca.bloqueio_meta import (
-    cliente_bloqueado_meta_existe_banco,
+    consultar_protecao_remetente,
 )
 
 
 logger = logging.getLogger("webhook.bloqueio_meta_guard")
 
 
-def responder_se_cliente_marcado_para_bloqueio(
+def verificar_protecao_remetente(
     wa_id_cliente,
     phone_id_unidade,
-    nome_cliente=None,
+    identificadores,
+    conta_origem,
 ):
     """
     Intercepta apenas a denylist existente.
@@ -29,12 +30,13 @@ def responder_se_cliente_marcado_para_bloqueio(
     tentativa.
     """
     if not wa_id_cliente or not phone_id_unidade:
-        return None
+        return None, wa_id_cliente
 
     consulta = _consultar_cliente_marcado_para_bloqueio(
         wa_id_cliente,
         phone_id_unidade,
-        nome_cliente=nome_cliente,
+        identificadores=identificadores,
+        conta_origem=conta_origem,
     )
 
     if not consulta["banco_ok"]:
@@ -44,15 +46,19 @@ def responder_se_cliente_marcado_para_bloqueio(
                 "reason": "blocklist_validation_unavailable",
             },
             status=503,
-        )
+        ), None
 
-    if not consulta["marcado"]:
-        return None
+    if consulta["protecao"] is None:
+        return JsonResponse({"status": "ignored", "reason": "central_incompativel"}), None
+
+    central, chave_flood = consulta["protecao"]
+    if central is None:
+        return None, chave_flood or wa_id_cliente
 
     meta_ok = False
 
     try:
-        bloquear_usuario_meta(wa_id_cliente, phone_id_unidade)
+        bloquear_usuario_meta(wa_id_cliente, phone_id_unidade, central=central)
         meta_ok = True
         logger.warning(
             "bloqueio_meta_reconfirmado | acao=bloquear_novamente "
@@ -81,13 +87,14 @@ def responder_se_cliente_marcado_para_bloqueio(
     return JsonResponse({
         "status": "ignored",
         "reason": "cliente_marcado_bloqueio_meta",
-    })
+    }), None
 
 
 def _consultar_cliente_marcado_para_bloqueio(
     wa_id_cliente,
     phone_id_unidade,
-    nome_cliente=None,
+    identificadores,
+    conta_origem,
 ):
     conn = None
 
@@ -95,16 +102,17 @@ def _consultar_cliente_marcado_para_bloqueio(
         conn = get_conn(application_name="webhook_chatbot")
         cursor = conn.cursor()
 
-        marcado = cliente_bloqueado_meta_existe_banco(
-            wa_id_cliente,
+        protecao = consultar_protecao_remetente(
+            identificadores,
             phone_id_unidade,
+            conta_origem,
             cursor,
         )
 
         conn.commit()
         return {
             "banco_ok": True,
-            "marcado": marcado,
+            "protecao": protecao,
         }
 
     except Exception as exc:
@@ -121,7 +129,7 @@ def _consultar_cliente_marcado_para_bloqueio(
         )
         return {
             "banco_ok": False,
-            "marcado": False,
+            "central": None,
         }
 
     finally:

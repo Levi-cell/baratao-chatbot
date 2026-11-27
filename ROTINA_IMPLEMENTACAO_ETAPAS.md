@@ -25,7 +25,7 @@ produto. O texto e os botões ficam no arquivo de mensagens 3, não no de CPF.
 A saudação é exceção intencional de validação: a primeira entrada recebe as
 regras do canal antes de ser interpretada. A etapa 1 apresenta
 a saudação e depois aguarda o nome. O histórico confirmado identifica se a
-apresentação está pendente, sem estado artificial de abertura. A etapa 11 é
+apresentação está pendente, sem estado artificial de abertura. A etapa 7 é
 encerramento com bloqueio interno de 90 dias.
 
 ## 1. Definir regra e mapa
@@ -39,7 +39,7 @@ Exemplos atuais:
 ```text
  1 + nome_valido_falta_cpf     → 2
  2 + cpf_valido               → 3
- 1 ou 2 + humano_solicitado    → 11
+ 1 ou 2 + humano_solicitado    → 7
 ```
 
 Identificadores do fluxo portado ficam em `core/etapas_pos_venda.py`.
@@ -70,14 +70,14 @@ ficar artificialmente pertencendo à etapa 1.
 O validador contextual usa o contexto já carregado. Extratores puros podem
 ficar em `core/validacoes/`, sem banco, Redis, HTTP ou importação do worker.
 
-Nas etapas 1, 2 e 3, após a apresentação, o resolver verifica primeiro mídia,
+Nas etapas 1 a 5, após a apresentação, o resolver verifica primeiro mídia,
 pedido contendo “humano” e limite de turnos; depois valida nome ou CPF.
 Três repetições confirmadas levam ao encaminhamento na quarta entrada.
 Um avanço válido anterior a esse limite zera o contador.
 
 Resposta específica inválida repete a etapa, com `tratamento=True`, sem
 evento de transição. O encaminhamento universal, apesar do nome
-“tratamento”, produz uma transição real para 11; ele não pode carregar a
+“tratamento”, produz uma transição real para 7; ele não pode carregar a
 flag de repetição `tratamento=True`.
 
 Antes do HTTP, o resolver consulta o mapa carregado, verifica o destino
@@ -154,6 +154,6 @@ tratadores de erros externos, os locks ou o contrato da fila.
 
 ## Estado atual
 
-Etapas 1, 2 e 3 implementadas, incluindo abertura conforme cadastro e tratamento universal. A etapa 3 salva produto no atendimento 1:1 e avança para 4, apresentando a lista de assuntos. A resposta de assunto e as etapas posteriores ainda não estão implementadas. Não se pergunta cidade. IDs 5 e 10 sem uso; encerramento em 11. O dispatcher não chama etapas antigas do Supera por coincidência de ID.
+As etapas 1 a 6 coletam nome, CPF, produto, assunto, pedidos e relato. O encaminhamento normal ou universal termina na etapa 7. O aviso sobre avarias faz parte da mensagem de contato para assistência.
 
-Consumo Meta continua como worker independente a preservar. Seus consumidores ainda precisam ser adaptados às tabelas de central e consumo do varejo antes da ativação; essa adaptação não pertence aos resolvers de atendimento.
+O worker de consumo Meta consulta o consumo da central e alimenta a aba Consumo do painel.

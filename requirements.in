@@ -1,0 +1,13 @@
+# Dependências diretas do chatbot, do painel e dos workers (Python 3.12).
+Django~=6.0.10
+gunicorn~=26.0.0 ; sys_platform == "linux"
+httpx~=0.28.1
+psycopg[binary]~=3.3.3
+python-dotenv~=1.2.2
+pywa~=4.5.0
+redis~=7.4.0
+reportlab~=4.5.1
+requests~=2.34.2
+svglib~=2.4.0
+# A saudação e o consumo Meta usam zoneinfo, inclusive em hosts sem base IANA.
+tzdata>=2025.3

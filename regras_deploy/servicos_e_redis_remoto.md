@@ -1,6 +1,6 @@
 # Servicos da VM e Redis remoto
 
-Este e o procedimento canonico para operar os serviços do Supera e o
+Este e o procedimento canonico para operar os serviços do Baratão e o
 Redis de producao.
 
 ## Regra de arquitetura
@@ -25,21 +25,7 @@ remoto.
 
 ## Operação dos serviços
 
-O [inventário](../workers/README.md) identifica webhook, flow, consulta inicial FireAds, Funil, follow-up, consumo Meta e origem FireAds. Para uma mudança de schema, consultar a [rotina de deploy](rotina_deploy.md). Em manutenção parcial, usar o nome exato da unit afetada e preservar quais serviços estavam habilitados.
-
-## Pausar somente os lembretes
-
-Para uma pausa temporária, use `sudo systemctl stop chatbot-worker-followup.service`.
-Para manter a pausa também após reiniciar a VM:
-
-```bash
-sudo systemctl disable --now chatbot-worker-followup.service
-```
-
-O flow continua tratando mensagens e retomadas com stage positivo. Essa ação não
-zera stages nem apaga recibos. Na reativação, confira banco/flow antes de usar
-`sudo systemctl enable --now chatbot-worker-followup.service`.
-O procedimento está em [rotina_deploy.md](rotina_deploy.md).
+O [inventário](../workers/README.md) identifica os workers de fluxo e consumo Meta. O serviço `chatbot-webhook.service` atende o webhook e o painel. Para alterar o schema, consultar a [rotina de deploy](rotina_deploy.md). Registrar os serviços ativos antes da manutenção.
 
 ## Confirmar que a aplicacao usa o Redis remoto
 
@@ -62,22 +48,21 @@ As units antigas do webhook e do worker-flow exigiam incorretamente
 `redis-server.service`. Portanto, **nao remova o Redis local antes de instalar
 as units corrigidas**.
 
-Depois de atualizar `/opt/chatbot/app` pela branch `prod`, instale as quatro
+Depois de atualizar `/opt/chatbot/app` na revisão validada, instale as três
 units atuais e recarregue o `systemd`:
 
 ```bash
 sudo install -m 0644 /opt/chatbot/app/deploy/systemd/chatbot-webhook.service /etc/systemd/system/chatbot-webhook.service
 sudo install -m 0644 /opt/chatbot/app/deploy/systemd/chatbot-worker-flow.service /etc/systemd/system/chatbot-worker-flow.service
-sudo install -m 0644 /opt/chatbot/app/deploy/systemd/chatbot-worker-funil.service /etc/systemd/system/chatbot-worker-funil.service
-sudo install -m 0644 /opt/chatbot/app/deploy/systemd/chatbot-worker-followup.service /etc/systemd/system/chatbot-worker-followup.service
+sudo install -m 0644 /opt/chatbot/app/deploy/systemd/chatbot-worker-consumo-meta.service /etc/systemd/system/chatbot-worker-consumo-meta.service
 sudo systemctl daemon-reload
-sudo systemd-analyze verify /etc/systemd/system/chatbot-webhook.service /etc/systemd/system/chatbot-worker-flow.service /etc/systemd/system/chatbot-worker-funil.service /etc/systemd/system/chatbot-worker-followup.service
+sudo systemd-analyze verify /etc/systemd/system/chatbot-webhook.service /etc/systemd/system/chatbot-worker-flow.service /etc/systemd/system/chatbot-worker-consumo-meta.service
 ```
 
 Confirme que nenhuma unit ainda depende do servidor local:
 
 ```bash
-if systemctl show chatbot-webhook.service chatbot-worker-flow.service chatbot-worker-funil.service chatbot-worker-followup.service -p Requires -p After --no-pager | grep -q redis-server; then echo 'ABORTAR: ainda existe dependencia de redis-server'; exit 1; else echo 'OK: units sem Redis local'; fi
+if systemctl show chatbot-webhook.service chatbot-worker-flow.service chatbot-worker-consumo-meta.service -p Requires -p After --no-pager | grep -q redis-server; then echo 'ABORTAR: ainda existe dependencia de redis-server'; exit 1; else echo 'OK: units sem Redis local'; fi
 ```
 
 Execute tambem o teste `REDIS_REMOTO_OK` deste documento. Somente se os dois

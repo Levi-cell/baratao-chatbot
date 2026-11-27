@@ -6,16 +6,16 @@ aos repositórios; não executa SQL, commit, rollback, HTTP ou escrita em cache.
 
 from core.etapas_pos_venda import (
     ETAPA_NOME, ETAPA_CPF, ETAPA_PRODUTO, ETAPA_ASSUNTO, EVENTO_PRODUTO_ESCOLHIDO,
-    ETAPA_PEDIDOS, EVENTO_ASSUNTO_ESCOLHIDO,
+    ETAPA_PEDIDOS, ETAPA_DETALHES, EVENTO_SITUACAO_INFORMADA, EVENTO_ASSUNTO_ESCOLHIDO,
     ETAPA_ENCAMINHAMENTO, EVENTO_NOME_VALIDO_FALTA_CPF,
-    EVENTO_NOME_VALIDO_CPF_PRESENTE, EVENTO_CPF_VALIDO,
+    EVENTO_CPF_VALIDO,
     EVENTOS_ENCAMINHAMENTO,
 )
 from core.repositories.atendimento.clientes import atualizar_nome_titular, atualizar_cpf_titular
 from core.repositories.atendimento.pos_venda import (
     atualizar_nome_do_atendimento, atualizar_cpf_do_atendimento,
     registrar_contatos_encaminhados, atualizar_produto_do_atendimento,
-    atualizar_assunto_do_atendimento,
+    atualizar_assunto_do_atendimento, registrar_detalhes,
 )
 from core.validacoes.assunto_pos_venda import ASSUNTOS
 from core.validacoes.encaminhamento_pos_venda import setores_encaminhamento
@@ -25,7 +25,7 @@ from core.repositories.atendimento.pedidos import inserir_pedidos_da_conversa, r
 
 _CAMPOS_EFEITO = frozenset({
     "nome_titular", "cpf_titular", "produto", "assunto", "encaminhado_moveis", "encaminhado_sofas",
-    "numeros_pedido",
+    "numeros_pedido", "detalhes",
 })
 
 
@@ -52,7 +52,10 @@ def _registrar_encaminhamento(contexto, envio, cursor):
     """O efeito exige os contatos dos setores definidos para este atendimento."""
     _validar_destino(contexto, envio, ETAPA_ENCAMINHAMENTO)
     setores = setores_encaminhamento(contexto.get("produto"))
-    _validar_campos_efeito(envio, {f"encaminhado_{setor}" for setor in setores})
+    campos = {f"encaminhado_{setor}" for setor in setores}
+    if envio["evento_transicao"] == EVENTO_SITUACAO_INFORMADA:
+        campos.add("detalhes")
+    _validar_campos_efeito(envio, campos)
     registrar_contatos_encaminhados(
         contexto["id_conversa"], envio.get("encaminhado_moveis"),
         envio.get("encaminhado_sofas"), cursor,
@@ -65,6 +68,11 @@ def atualizar_banco_conforme_transicao_de_etapa(contexto, envio, cursor):
     if envio.get("resposta_ja_existia"):
         return {}
 
+    operacao = envio.get("operacao_contato")
+    if operacao:
+        aplicar_efeito_contato(contexto,envio,cursor)
+        if operacao in {"confirmar","repetir"} or (operacao=="abrir" and not envio.get("evento_transicao")):
+            return {}
     etapa = contexto["id_etapa_origem_transicao"]
     evento = envio.get("evento_transicao")
     destino = envio["id_etapa_resultante"]
@@ -79,9 +87,8 @@ def atualizar_banco_conforme_transicao_de_etapa(contexto, envio, cursor):
             return {}
         if evento in EVENTOS_ENCAMINHAMENTO:
             return _registrar_encaminhamento(contexto, envio, cursor)
-        if evento in {EVENTO_NOME_VALIDO_FALTA_CPF, EVENTO_NOME_VALIDO_CPF_PRESENTE}:
-            esperado = ETAPA_CPF if evento == EVENTO_NOME_VALIDO_FALTA_CPF else ETAPA_PRODUTO
-            _validar_destino(contexto, envio, esperado)
+        if evento == EVENTO_NOME_VALIDO_FALTA_CPF:
+            _validar_destino(contexto, envio, ETAPA_CPF)
             _validar_campos_efeito(envio, {"nome_titular"})
             nome = envio["nome_titular"]
             atualizar_nome_titular(contexto["id_cliente"], nome, cursor)
@@ -138,7 +145,7 @@ def atualizar_banco_conforme_transicao_de_etapa(contexto, envio, cursor):
             atualizar_assunto_do_atendimento(contexto["id_conversa"], assunto, cursor)
             return {"assunto": assunto}
 
-    # PEDIDOS (6): o vínculo com a filial pertence a cada número desta conversa.
+    # PEDIDOS (5): o vínculo com a filial pertence a cada número desta conversa.
     elif etapa == ETAPA_PEDIDOS:
         if not evento and destino == ETAPA_PEDIDOS:
             _validar_campos_efeito(envio, set())
@@ -161,6 +168,45 @@ def atualizar_banco_conforme_transicao_de_etapa(contexto, envio, cursor):
         registrar_situacao_nota(contexto["id_conversa"], perdeu_nota, cursor)
         return {"perdeu_nota": perdeu_nota}
 
+    elif etapa == ETAPA_DETALHES:
+        if not evento and destino == ETAPA_DETALHES:
+            _validar_campos_efeito(envio, set())
+            return {}
+        if evento in EVENTOS_ENCAMINHAMENTO:
+            return _registrar_encaminhamento(contexto, envio, cursor)
+        if evento == EVENTO_SITUACAO_INFORMADA:
+            resultado = _registrar_encaminhamento(contexto, envio, cursor)
+            registrar_detalhes(contexto["id_conversa"], envio["detalhes"], cursor)
+            return resultado
+
     raise ValueError(
         f"Efeito não implementado para etapa={etapa}, evento={evento}, destino={destino}."
     )
+
+
+def aplicar_efeito_contato(ctx,envio,cursor):
+    from core.repositories.atendimento import identidade_cliente as ident
+    from core.repositories.atendimento import solicitacao_contato as repositorio
+    conversa = ctx["id_conversa"]
+    operacao = envio["operacao_contato"]
+    uid = envio.get("bsuid_contato")
+    if operacao == "abrir":
+        if envio["motivo_contato"] == "reconfirmacao":
+            from core.repositories.atendimento.fallback_contato import concluir_reservas
+            concluir_reservas(conversa,cursor)
+        repositorio.abrir_solicitacao(conversa,envio["motivo_contato"],envio["id_etapa_resultante"],
+                                      uid,envio["id_hash_msg_bot"],cursor)
+    elif operacao == "repetir":
+        repositorio.repetir_solicitacao(conversa,uid,envio["id_hash_msg_bot"],cursor)
+    elif operacao == "confirmar":
+        if not repositorio.ler_solicitacao_para_confirmar(conversa,uid,cursor):
+            raise ValueError("Solicitação já encerrada")
+        telefone = envio["telefone_provado"]
+        ident.serializar_chave(f"wa:{telefone}",cursor)
+        if ident.cliente_telefone(telefone,cursor) not in (None,ctx["id_cliente"]):
+            raise ValueError("Conciliação de cadastros necessária")
+        ident.definir_telefone(ctx["id_cliente"],telefone,cursor)
+        ident.alias_confirmado(ctx["id_central"],uid,cursor)
+        repositorio.encerrar_solicitacao(conversa,cursor)
+    elif operacao=="encerrar":
+        repositorio.encerrar_solicitacao(conversa,cursor)

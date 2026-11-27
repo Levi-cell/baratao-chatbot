@@ -1,0 +1,43 @@
+-- Último catálogo anterior à renumeração de 26/11.
+INSERT INTO chatbot.etapa (id_etapa, nome_etapa, encerra_automaticamente, bloqueio_dias) VALUES
+    (1, 'nome_titular', false, 0),
+    (2, 'cpf_titular', false, 0),
+    (3, 'produto', false, 0),
+    (4, 'assunto', false, 0),
+    (6, 'pedidos', false, 0),
+    (7, 'visita_loja', false, 0),
+    (8, 'visita_pendente', true, 0),
+    (9, 'detalhes', false, 0),
+    (11, 'encaminhamento', true, 90);
+
+INSERT INTO chatbot.etapa_transicao (id_etapa_origem, evento, id_etapa_destino) VALUES
+    (1, 'nome_valido_falta_cpf', 2),
+    (1, 'nome_valido_cpf_presente', 3),
+    (2, 'cpf_valido', 3),
+    (3, 'produto_escolhido', 4),
+    (4, 'assunto_escolhido', 6),
+    (6, 'pedidos_assistencia', 7),
+    (6, 'nota_perdida_assistencia', 7),
+    (6, 'pedidos_demais_assuntos', 9),
+    (6, 'nota_perdida_demais_assuntos', 9),
+    (7, 'loja_nao_visitada', 8),
+    (7, 'loja_visitada', 9),
+    (9, 'situacao_informada', 11),
+    (1, 'midia_recebida', 11),
+    (1, 'humano_solicitado', 11),
+    (1, 'limite_sem_avanco', 11),
+    (2, 'midia_recebida', 11),
+    (2, 'humano_solicitado', 11),
+    (2, 'limite_sem_avanco', 11),
+    (3, 'midia_recebida', 11),
+    (3, 'humano_solicitado', 11),
+    (3, 'limite_sem_avanco', 11),
+    (4, 'midia_recebida', 11),
+    (4, 'humano_solicitado', 11),
+    (4, 'limite_sem_avanco', 11),
+    (6, 'midia_recebida', 11),
+    (6, 'humano_solicitado', 11),
+    (6, 'limite_sem_avanco', 11),
+    (7, 'midia_recebida', 11),
+    (9, 'midia_recebida', 11);
+

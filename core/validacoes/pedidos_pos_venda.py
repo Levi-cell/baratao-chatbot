@@ -2,7 +2,7 @@
 import re
 
 from core.etapas_pos_venda import (
-    ETAPA_VISITA_LOJA, ETAPA_DETALHES, EVENTO_PEDIDOS_ASSISTENCIA, EVENTO_PEDIDOS_DEMAIS_ASSUNTOS,
+    ETAPA_DETALHES, EVENTO_PEDIDOS_ASSISTENCIA, EVENTO_PEDIDOS_DEMAIS_ASSUNTOS,
     EVENTO_NOTA_PERDIDA_ASSISTENCIA, EVENTO_NOTA_PERDIDA_DEMAIS_ASSUNTOS,
 )
 from core.validacoes.assunto_pos_venda import ASSUNTOS
@@ -133,6 +133,6 @@ def transicao_dos_pedidos(assunto, *, perdeu_nota):
         raise ValueError("Falta um assunto válido no atendimento para encaminhar o pedido.")
     if assunto == "assistencia":
         evento = EVENTO_NOTA_PERDIDA_ASSISTENCIA if perdeu_nota else EVENTO_PEDIDOS_ASSISTENCIA
-        return evento, ETAPA_VISITA_LOJA
+        return evento, ETAPA_DETALHES
     evento = EVENTO_NOTA_PERDIDA_DEMAIS_ASSUNTOS if perdeu_nota else EVENTO_PEDIDOS_DEMAIS_ASSUNTOS
     return evento, ETAPA_DETALHES

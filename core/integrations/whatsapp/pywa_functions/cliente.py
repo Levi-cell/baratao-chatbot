@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from pywa import WhatsApp
+from core.integrations.whatsapp.remetente import WhatsAppCentral
 
 from core.integrations.whatsapp.messages.tratamentos.composicao import (
     aplicar_prefixo_retorno,
@@ -22,7 +22,7 @@ def conta_wa(phone_id, token=TOKEN_USUARIO_META, *, session=None):
     phone_id = _normalizar_phone_id(phone_id)
 
     opcoes = {"session": session} if session is not None else {}
-    cliente = WhatsApp(
+    cliente = WhatsAppCentral(
         token=token,
         phone_id=phone_id,
         api_version=get_meta_graph_api_version(),

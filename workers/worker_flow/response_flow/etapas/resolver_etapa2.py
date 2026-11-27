@@ -14,12 +14,12 @@ from workers.worker_flow.response_flow.transicoes.resolver_transicao import (
 
 def resolve_etapa2(contexto_historico):
     mensagem = contexto_historico["mensagem_cliente_atual"]
-    destinatario, remetente = mensagem["cliente_telefone"], mensagem["id_phone_unidade"]
+    destinatario, remetente = contexto_historico.get("destinatario_envio", mensagem.get("cliente_telefone")), mensagem["id_phone_unidade"]
     # Cadastro parcial: uma nova conversa pergunta o CPF antes de interpretar sua entrada.
     if contexto_historico.get("apresentacao_pendente"):
         return enviar_etapa2(
             destinatario, remetente,
-            nome_titular=(contexto_historico.get("cadastro") or {}).get("nome_titular"),
+            nome_titular=(contexto_historico.get("cadastro") or {}).get("nome_titular"), abertura=True,
         )
     tratamento = resolver_tratamento_universal(contexto_historico)
     if tratamento is not None:

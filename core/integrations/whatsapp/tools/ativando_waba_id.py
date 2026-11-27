@@ -63,13 +63,13 @@ def _normalizar_resposta(response):
             return dados
 
         return {
-            "success": response.ok,
+            "success": False,
             "data": dados,
         }
 
     except ValueError:
         return {
-            "success": response.ok,
+            "success": False,
             "text": response.text,
         }
 

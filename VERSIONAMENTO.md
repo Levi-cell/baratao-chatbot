@@ -1,208 +1,12 @@
-# Registro de versionamento
-
-## Estado no encerramento do desenvolvimento
-
-A última publicação numerada registrada é V1.20.0 (`4c44798`). O commit posterior `a7c110e` ajusta a redação do endereço. A revisão de 08/11/2026 do validador financeiro da etapa 4 integra a árvore preparada para arquivamento, sem versão numerada própria. O [diagnóstico](docs/diagnostico_financeiro_fireads_20261108.md) registra a reprodução e os limites das evidências históricas.
+# Versionamento do Baratão
 
 ## Histórico de versões
 
-### V1.0.0 — Proteção contra bots
+### Versão beta — Triagem e encaminhamento do pós-venda
 
-Commit: `9d34c6b920e92cb2f759e7ae3148b5a6e69a66f7`
+Commit: PENDENTE
 
-### V1.0.1 — Profissão no atendimento
-
-Commit: `75975180e4bf85ce80da571df6844f10977c2df0`
-
-### V1.0.2 — Decisão de comentário
-
-Commit: `df8b014c8efbcbd2e1b2f8a3a57e39498b47fb62`
-
-### V1.0.3 — Graph API centralizada
-
-Commit: `61325237d9f84aeb6909992d344f56d18a4001bd`
-
-### V1.0.4 — Confirmação, validações, tratamentos, renumeração
-
-Commit: `440d5e0971cbd76841a764030fe510dc4861fa5a`
-
-### V1.0.5 — Triagem etária, Funil, tratamentos e validações
-
-Commit: `345e8767946a4cab41c9f31359db137c40fb60e7`
-
-### Correção V1.0.5 — Profissão obrigatória após confirmação
-
-Commit: `5f1889f5e2c81f3c233b3ea81940cbab98a84620`
-
-### V1.0.6 — Apresentação personalizada do agente por unidade
-
-Commit: `e052625d7707627a8c28945003ed2506c34e02d3`
-
-### V1.0.7 — Organização operacional e limpeza estrutural
-
-Commit: `2bc41888db4987e957c5653825acf4a55e9d611d`
-
-### V1.0.8 — Suporte idoso e e-mail configurável
-
-Commit: `62dca9a8c616f4682308c75600ab53a32d70c2db`
-
-### V1.0.9 — Portal de monitoramento por unidade
-
-Commit: `830e5634fdcc244d29e19114eb806c03846065c8`
-
-### V1.1.0 — Painel responsivo, tags, CSV e triagem
-
-Commit: `3f75447eb64a1a01085cccbc4a676a6a052d8493`
-
-### V1.1.1 — Painel compacto e exportação CSV essencial
-
-Commit: `84735aeaa521cfcf3a8bb13b2a8eddeb126fa1df`
-
-### V1.2.0 — Follow-up automático e ajustes no CSV
-
-Commit: `ec74d26398724e192f798397d71b189ed08c805c`
-
-### V1.3.0 — Suporte etário configurável e indicadores comerciais
-
-Commit: `50e59879c4c2aa6e0f6cf676adf50d40aec8ca03`
-
-### V1.4.0 — Reservas aprimoradas, mensagens revisadas, encaminhamento contextualizado
-
-Commit: `701b834fc178efcd42591692b9c35ce5827b840c`
-
-### V1.5.0 — Atendimento refinado e abertura contextualizada
-
-Commit: `8b8a0f8f2783dc7f137f389d96bb88f3f4f4acb5`
-
-### V1.5.1 — Correções nas mensagens de atendimento
-
-Commit: `d001d674bb7fb08f8b70980aec5cacfb326009d2`
-
-### V1.5.2 — Correção da retomada após follow-up
-
-Commit: `e5a2b45a5a71b487b6aa6a6f0aa9253e87185581`
-
-### V1.6.0 — Segundo follow-up e consulta etária personalizada
-
-Commit: `cdbc66f67a718c6ca82eec885237b69ed114865e`
-
-### V1.6.2 — Correções nas mensagens e consulta etária
-
-Commit: `8f6fe39928ef930092ea1c667f396f32501b5295`
-
-### V1.6.3 — Correção visual na oferta do dependente
-
-Commit: `ab157b4d53fec2fe60356047ac1709535731e2f1`
-
-### V1.6.4 — Mensagens personalizadas nos dois follow-ups
-
-Commit: `ec47623ae9a06ee0e1b5337a23b64df2da1bdf3a`
-
-### V1.6.5 — Follow-up adaptado à etapa da oferta
-
-Commit: `e1ea04b0f620da0eec783b818a72337f5b5f2fc0`
-
-### V1.6.6 — Botão de reserva e aceite compatível
-
-Commit: `087b5eb348d5fa84a8c78ecf26c37b59f52afda7`
-
-### V1.7.0 — Filtro comercial e encerramentos por idade
-
-Commit: `dbe38014a93b3d264e280911bd6db0f607591777`
-
-### V1.7.1 — Simplificação do card de encerramentos
-
-Commit: `d4104cfc444be88fef9deea1d0d3b4c5f04000da`
-
-### V1.8.0 — Consumo mensal Meta e relatórios
-
-Commit: `0b01c3a0fee52a24add7e4e1c0133eeee6099615`
-
-### V1.8.1 — Explicações de consumo para franqueados
-
-Commit: `2f4e2c9433d03b21d608c795c0d4cc6a0a3b7e2f`
-
-### V1.9.0 — Reservas com e sem link
-
-Commit: `1c2a1ae349fe2c0d28ba5b632a8b71072945d4ae`
-
-### V1.9.1 — Correção dos botões e turnos
-
-Commit: `afa9c14ae030277210897e479a906f2b52c47a58`
-
-### V1.9.2 — Cortesia e mensagens menos repetitivas
-
-Commit: `395d1eb0321507cdc67d92e93b4ebe530bd57915`
-
-### V1.10.0 — Integração FireAds e organização do banco
-
-Commit: `49af8d51498f83ceeea62f5b53aab7091007bdde`
-
-### V1.10.1 — Suspensão, personalização e consultas diretas
-
-Commit: `8103df82efeb9c4881a83f7dec1c7e6f08acb076`
-
-### V1.10.2 — Correção da busca telefônica FireAds
-
-Commit: `404a7ab7554ddb14455c0c10e6339403e215d31d`
-
-### V1.11.0 — Worker de consulta FireAds
-
-Commit: `f0946c52f3dc538ee11cc578ddb2011727558626`
-
-### V1.11.1 — Correção da seleção FireAds
-
-Commit: `66b59ccf908206309d4d92e3b8e56cac1f07f666`
-
-### V1.11.2 — Correção da atualização do dashboard FireAds
-
-Commit: `a4803d27d71224b20d583665df8f5680f3c37d64`
-
-### V1.11.3 — Correção da extração de dados FireAds
-
-Commit: `916f69ca61777e811358a203df7687d859b6868e`
-
-### V1.12.0 — FireAds unificada e ajustes nos envios
-
-Commit: `9455765856575119aec9441cb3e56d02dfb957be`
-
-### V1.13.0 — Indicador de digitação no atendimento
-
-Commit: `9468e23cbb0ead6cf09c7189a884704ed21b80ad`
-
-### V1.14.0 — Coleta parcial, Chat Fire e turno
-
-Commit: `5fc047e3a049e6aeb4b56e3e766cba2bcdeb664b`
-
-### V1.15.0 — Sincronização dos campos do chatbot com a FireAds
-
-Commit: `5ff1681502eeade253f60201cfd691ba5024acf9`
-
-### V1.16.0 — Monitoramento FireAds e entregas coordenadas
-
-Commit: `fa5c30ca37f35cb34532053ae1190efd0d59fdf1`
-
-### V1.16.1 — Correção da leitura JSONB no monitoramento
-
-Commit: `143d4128aa5e00dc8c625cc12f4263b375a36a5e`
-
-### V1.17.0 — Perfis, anúncios Google e origem periódica
-
-Commit: `b662524e768b38cf900b404f61f464f392f6d67e`
-
-### V1.18.0 — Janela de perfis por origem
-
-Commit: `201b6b253af731195d31fb35a11d4d66652f4e89`
-
-### V1.19.0 — Endereços, horários e tratamentos aprimorados
-
-Commit: `15da7ffb8380dcfcd174017957cd43095f73dbb1`
-
-### V1.20.0 — Três follow-ups e mensagens aprimoradas
-
-Commit: `4c44798d2ed940465adcd1d4a6d7818068cd028a`
-
-## Padrão de numeração a partir da V1.2.0
+## Padrão de numeração
 
 Adotamos o formato `VMAJOR.MINOR.PATCH`, seguindo o versionamento semântico.
 O prefixo V identifica a versão; cada um dos três números tem um significado:
@@ -223,25 +27,13 @@ Os números são independentes, não decimais: V1.9.0 pode avançar para V1.10.0
 Não é necessário publicar V1.1.2 antes de V1.2.0; a mudança determina qual número
 avança. Evitar saltos arbitrários, como V1.1.1 -> V1.5.0, sem motivo documentado.
 
-As versões anteriores mantêm seus nomes e registros históricos. Da V1.2.0 em
-diante, toda correção publicada recebe uma nova versão PATCH, em vez de reutilizar
-o número anterior com o rótulo "Correção". Novidades seguem a regra MINOR ou MAJOR.
-Uma versão publicada não deve ser reutilizada para identificar outro conteúdo.
+Cada correção publicada recebe uma versão PATCH. Novidades seguem a regra MINOR ou MAJOR. Cada versão publicada identifica um único commit.
 
 Referência: [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## Registro das próximas versões
 
-1. Antes do commit, escolher a versão conforme a regra acima e adicionar uma
-   descrição de até seis palavras neste arquivo, com o campo `Commit: PENDENTE`.
-2. Criar o commit da versão.
-3. Copiar o hash gerado pelo Git para a entrada correspondente no arquivo local.
-4. Enviar essa atualização do hash junto com o commit da versão seguinte.
-
-O hash de um commit não pode ser gravado dentro do próprio commit antes de ele
-existir. Por isso, a versão entra no Git como PENDENTE e recebe o hash localmente
-após a criação do commit principal.
-
-É normal o `VERSIONAMENTO.md` local ficar uma atualização à frente do arquivo que
-está no Git. Por exemplo: o commit da V1.0.3 levará o hash definitivo da V1.0.2
-e deixará a própria V1.0.3 como PENDENTE até a versão seguinte.
+1. Antes do commit, registrar a versão e uma descrição de até seis palavras com o campo `Commit: PENDENTE`.
+2. Criar o commit da versão e publicá-lo na branch `prod`.
+3. Após confirmar a publicação, preencher localmente o hash completo do commit.
+4. Enviar esse registro de hash junto com a versão seguinte.

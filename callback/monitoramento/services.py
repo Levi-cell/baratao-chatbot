@@ -105,7 +105,7 @@ def carregar_mensagens(acesso, id_cliente, periodo):
             'tipo': linha['tipo'],
             'texto': linha['texto'] or f"[{linha['tipo'] or 'mensagem sem texto'}]",
         }
-        item['botoes'] = botoes_para_mensagem(item)
+        item['botoes'] = botoes_para_mensagem({**item, 'interativo': linha.get('interativo')})
         mensagens.append(item)
     return {'id_cliente': id_cliente, 'mensagens': mensagens}
 

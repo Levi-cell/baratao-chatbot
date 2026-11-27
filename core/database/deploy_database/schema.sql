@@ -11,6 +11,8 @@ CREATE TABLE chatbot.central_pos_venda (
            (id_fuso IS NOT NULL AND id_fuso > 0 AND nome_fuso IS NOT NULL AND btrim(nome_fuso) <> '')),
     waba_id varchar NOT NULL,
     phone_number_id varchar NOT NULL UNIQUE,
+    -- Preencher somente com o ID de conta WhatsApp verificado para este número.
+    waac_id varchar UNIQUE CHECK (waac_id ~ '^[1-9][0-9]*$' AND waac_id <> phone_number_id),
     telefone varchar NOT NULL UNIQUE,
     telefone_moveis varchar CHECK (telefone_moveis ~ '^[1-9][0-9]{7,14}$'),
     telefone_sofas varchar CHECK (telefone_sofas ~ '^[1-9][0-9]{7,14}$'),
@@ -20,7 +22,9 @@ CREATE TABLE chatbot.central_pos_venda (
 
 CREATE TABLE chatbot.cliente (
     id_cliente serial PRIMARY KEY,
-    waid_telefone varchar NOT NULL UNIQUE,
+    waid_telefone varchar UNIQUE,
+    username text,
+    username_observado_em timestamptz,
     nome_titular text CHECK (btrim(nome_titular) <> ''),
     cpf_titular varchar(11) CHECK (cpf_titular ~ '^[0-9]{11}$'),
     cidade_loja_compra text CHECK (cidade_loja_compra ~ '[^[:space:]]')
@@ -141,7 +145,11 @@ CREATE TABLE chatbot.fila_mensagens (
     id_mensagem serial PRIMARY KEY,
     id_central int NOT NULL REFERENCES chatbot.central_pos_venda,
     id_conversa int,
-    cliente_telefone varchar NOT NULL,
+    cliente_telefone varchar,
+    id_cliente int REFERENCES chatbot.cliente,
+    user_id_origem text,
+    username_origem text,
+    CONSTRAINT fila_identidade_presente CHECK (cliente_telefone IS NOT NULL OR (user_id_origem IS NOT NULL AND id_cliente IS NOT NULL)),
     id_hash_msg varchar NOT NULL UNIQUE,
     received_data_hora timestamptz NOT NULL,
     tipo_mensagem varchar NOT NULL,
@@ -158,7 +166,8 @@ CREATE TABLE chatbot.fila_mensagens (
 
 CREATE INDEX fila_pendente ON chatbot.fila_mensagens (next_attempt_at, id_mensagem) WHERE status = 'pending';
 CREATE INDEX fila_abandonada ON chatbot.fila_mensagens (processing_started_at) WHERE status = 'processing';
-CREATE INDEX fila_turno ON chatbot.fila_mensagens (id_central, cliente_telefone, received_data_hora, id_mensagem)
+CREATE INDEX fila_primeira_identidade ON chatbot.fila_mensagens (id_central, id_cliente, id_mensagem);
+CREATE INDEX fila_turno ON chatbot.fila_mensagens (id_central, id_cliente, received_data_hora, id_mensagem)
     WHERE status IN ('pending','processing');
 
 CREATE TABLE chatbot.historico_mensagens (
@@ -175,6 +184,8 @@ CREATE TABLE chatbot.historico_mensagens (
     tipo_mensagem varchar NOT NULL,
     conteudo_texto text,
     interativo jsonb,
+    tipo_destinatario text CHECK (tipo_destinatario IN ('wa_id','bsuid')),
+    valor_destinatario text,
     status_envio varchar,
     UNIQUE (id_conversa, id_hash_msg),
     FOREIGN KEY (id_conversa, id_hash_cliente_origem) REFERENCES chatbot.historico_mensagens (id_conversa, id_hash_msg),
@@ -187,6 +198,38 @@ CREATE UNIQUE INDEX resposta_por_entrada ON chatbot.historico_mensagens (id_hash
     WHERE quem_enviou = 'bot' AND status_envio = 'sent';
 CREATE INDEX historico_turno ON chatbot.historico_mensagens (id_conversa, received_data_hora DESC, id_mensagem DESC);
 CREATE INDEX historico_fila ON chatbot.historico_mensagens (id_mensagem_fila) WHERE id_mensagem_fila IS NOT NULL;
+
+CREATE TABLE chatbot.identidade_bsuid (
+    id_central int NOT NULL REFERENCES chatbot.central_pos_venda,
+    user_id text NOT NULL CHECK (btrim(user_id) <> ''),
+    id_cliente int NOT NULL REFERENCES chatbot.cliente,
+    wamid_origem text NOT NULL,
+    suspender_telefone boolean NOT NULL DEFAULT false,
+    vigente boolean NOT NULL DEFAULT true,
+    PRIMARY KEY (id_central, user_id)
+);
+CREATE UNIQUE INDEX identidade_bsuid_vigente
+    ON chatbot.identidade_bsuid (id_central, id_cliente) WHERE vigente;
+
+CREATE TABLE chatbot.solicitacao_contato (
+    id_conversa int PRIMARY KEY REFERENCES chatbot.conversa,
+    motivo text NOT NULL CHECK (motivo IN ('cadastro', 'reconfirmacao')),
+    id_etapa_retomada int NOT NULL REFERENCES chatbot.etapa,
+    bsuid_destino text NOT NULL,
+    wamid_solicitacao text NOT NULL,
+    wamids_aceitos text[] NOT NULL,
+    erros_cliente smallint NOT NULL DEFAULT 0 CHECK (erros_cliente BETWEEN 0 AND 3)
+);
+
+CREATE TABLE chatbot.fallback_contato (
+    id_conversa int NOT NULL REFERENCES chatbot.conversa,
+    id_mensagem_fila int NOT NULL REFERENCES chatbot.fila_mensagens,
+    wamid_original text UNIQUE,
+    estado text NOT NULL CHECK (estado IN
+        ('reservado','em_envio','aceito','incerto','cancelado')),
+    atualizado_em timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (id_conversa, id_mensagem_fila)
+);
 
 CREATE FUNCTION chatbot.lock_conversa(p_id_conversa int)
 RETURNS TABLE(lock_ok boolean, lock_version_atual int) LANGUAGE sql AS $$
@@ -222,7 +265,7 @@ LANGUAGE sql AS $$
             (f.status = 'processing' AND f.processing_started_at < now() - interval '2 minutes')
         ) AND NOT EXISTS (
             SELECT FROM chatbot.fila_mensagens a
-            WHERE a.id_central = f.id_central AND a.cliente_telefone = f.cliente_telefone
+            WHERE a.id_central = f.id_central AND (a.id_cliente = f.id_cliente OR ((a.id_cliente IS NULL OR f.id_cliente IS NULL) AND a.cliente_telefone = f.cliente_telefone))
               AND a.status IN ('pending','processing')
               AND (a.received_data_hora, a.id_mensagem) < (f.received_data_hora, f.id_mensagem)
         )

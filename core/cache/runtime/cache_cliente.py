@@ -63,8 +63,8 @@ def buscar_cliente_cache(waid_telefone):
         return None
 
 
-def salvar_cliente_cache(waid_telefone, id_cliente):
-    key = _montar_key_cliente(waid_telefone)
+def salvar_cliente_cache(waid_telefone, id_cliente, *, id_central=None, tipo="wa_id"):
+    key = chave_lookup_cliente(id_central,tipo,waid_telefone)
 
     if key is None or not _id_cliente_valido(id_cliente):
         logger.warning(
@@ -138,3 +138,11 @@ def _id_cliente_valido(id_cliente):
         return int(id_cliente) > 0
     except (TypeError, ValueError):
         return False
+
+
+def chave_lookup_cliente(id_central, tipo, valor):
+    if tipo == "wa_id":
+        return _montar_key_cliente(valor)
+    if tipo == "bsuid" and valor:
+        return f"{REDIS_PREFIX}bsuid:{id_central}:{valor}"
+    raise ValueError("Identidade de cache ausente ou desconhecida")

@@ -11,7 +11,7 @@ from workers.worker_flow.response_flow.transicoes.resolver_transicao import (
 
 def resolve_etapa3(contexto_historico):
     mensagem = contexto_historico["mensagem_cliente_atual"]
-    destinatario, remetente = mensagem["cliente_telefone"], mensagem["id_phone_unidade"]
+    destinatario, remetente = contexto_historico.get("destinatario_envio", mensagem.get("cliente_telefone")), mensagem["id_phone_unidade"]
     if contexto_historico.get("apresentacao_pendente"):
         return enviar_etapa3(
             destinatario, remetente,

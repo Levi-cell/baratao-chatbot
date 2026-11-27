@@ -7,9 +7,9 @@ from core.integrations.whatsapp.messages.etapa2_messages import (
 from core.integrations.whatsapp.pywa_functions.pywa_senders.texto_pos_venda import enviar_texto_pos_venda
 
 
-def enviar_etapa2(cliente_telefone, phone_id_unidade, *, nome_titular=None):
+def enviar_etapa2(cliente_telefone, phone_id_unidade, *, nome_titular=None, abertura=False):
     return enviar_texto_pos_venda(
-        cliente_telefone, phone_id_unidade, montar_mensagem_etapa2(nome_titular), ETAPA_CPF,
+        cliente_telefone, phone_id_unidade, montar_mensagem_etapa2(nome_titular, abertura=abertura), ETAPA_CPF,
     )
 
 

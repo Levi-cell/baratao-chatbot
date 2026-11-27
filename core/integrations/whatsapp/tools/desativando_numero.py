@@ -7,6 +7,7 @@ from core.integrations.whatsapp.tools.config import (
     get_meta_http_timeout,
     get_token_usuario_meta,
 )
+from core.integrations.whatsapp.remetente import recurso_registro_meta
 from core.logging_config import short_value
 
 
@@ -14,7 +15,7 @@ logger = logging.getLogger("whatsapp.registro")
 
 
 def desregistrar_numero_whatsapp(phone_number_id):
-    url = construir_url_graph_api(f"{phone_number_id}/deregister")
+    url = construir_url_graph_api(f"{recurso_registro_meta(phone_number_id)}/deregister")
 
     headers = {
         "Authorization": f"Bearer {get_token_usuario_meta()}",

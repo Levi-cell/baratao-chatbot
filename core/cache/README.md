@@ -49,47 +49,60 @@ em memória descrito abaixo não é um servidor Redis local.
 
 ## Cliente
 
-`runtime/cache_cliente.py` relaciona `wa_id` ao `id_cliente`. Miss ou falha do
-Redis permite consulta/criação pelo worker. Valor inválido é descartado.
+O webhook resolve a identidade no PostgreSQL e associa o cliente à entrada da
+fila. O worker usa esse ID. Para uma entrada antiga sem ID, consulta o cache
+do telefone; em caso de ausência ou valor inválido, resolve o cliente no banco.
+Após o commit publica o vínculo no Redis por 180 dias. A chave de telefone é
+global; a chave de BSUID inclui a central. A conciliação de identidades ocorre
+no banco. Se um ID obsoleto causar a violação `chat_id_cliente_fkey`, o worker
+tenta remover a chave do telefone após o rollback para a próxima tentativa.
 
-Esse cache é global por cliente, não por unidade, e tem TTL de 180 dias. Se um
-ID obsoleto provocar a violação `conversa_id_cliente_fkey`, o `flow_worker`
-tenta remover a entrada para que o próximo retry consulte o banco novamente.
+## Central de pós-venda
 
-## Unidade
+`cache_unidade.py` publica o mapa de `phone_number_id` para `id_central` das
+centrais com `ativa = true`. O PostgreSQL versiona mudanças de cadastro pelo
+trigger `central_mudou`. Cada processo confere a versão no primeiro uso, a cada
+300 segundos e após uma falha sinalizada do Redis.
 
-`cache_unidade.py` mantém o mapa `phone_number_id -> id_unidade` e metadados de
-versão. As consultas que carregam ou confirmam esse mapa consideram somente
-unidades com `status_pagamento = TRUE`; `bpa_ativo` não é o filtro de admissão.
+- **Webhook.** Um número ausente no mapa é confirmado no PostgreSQL. Se a central
+  estiver ativa, tenta repor o mapa e segue. Quando a confirmação está
+  indisponível, responde HTTP 503. A entrada na fila também confere a conta de
+  origem e o número empresarial no banco.
+- **Worker.** A leitura da identidade na fila traz também a central da mensagem.
+  Se o Redis falhar, omitir o número ou apontá-lo para outra central, o worker
+  consulta o cadastro pelo número. Com a central ativa e o ID confirmado, tenta
+  repor o mapa e segue no mesmo ciclo, inclusive se só a escrita no Redis falhar.
+  Uma suspensão preserva a mensagem pendente. Se o número comercial mudou após
+  a retirada da fila, a tentativa seguinte relê o remetente. Uma violação de
+  `chat_id_central_fkey` também aciona a recarga após rollback.
+- **Admin.** Ao cadastrar ou trocar os identificadores de um remetente, o
+  formulário confere o Redis, verifica o vínculo do número com a conta na Meta,
+  assina os webhooks e registra o número. Se houver WAAC, compara os telefones
+  retornados pela Meta antes do registro. Só aceita o formulário com confirmação
+  das três operações. Editar o nome ou suspender o atendimento dispensa chamadas
+  à Meta. Após o commit de uma inclusão, edição ou exclusão, relê as centrais
+  ativas e publica o mapa. Um rollback descarta essa publicação. Se o Redis
+  falhar depois do commit, o Admin avisa da pendência e a versão no PostgreSQL
+  permite o reparo.
 
-```text
-cache válido e unidade presente -> usa Redis
-cache ausente/inválido ou Redis indisponível -> consulta banco
-divergência de versão -> tenta recarregar
-FK de unidade obsoleta detectada -> tenta recarregar para o retry
-```
+O provisionamento usa o token de sistema `META_ACCESS_TOKEN` e o PIN de
+registro `META_PHONE_REGISTRATION_PIN` do ambiente do webhook. Uma assinatura
+que a Meta já confirmou pode permanecer ativa se o registro do número ou a
+gravação local falhar. O Admin informa qual confirmação faltou quando recebe
+uma recusa da API. A suspensão local continua disponível sem acesso à Meta.
 
-No webhook, um phone ID ausente mesmo em cache válido é confirmado no banco;
-se a unidade existir, tenta recarregar o mapa. Se a confirmação no banco
-falhar, levanta `ValidacaoUnidadeIndisponivel`, convertida em HTTP 503. Já o
-worker lança `UnidadeNaoEncontrada` quando o mapa válido não contém um ID
-válido para o phone solicitado, sem consultar o banco nesse caminho.
-
-A versão persistida é conferida no primeiro uso, a cada 300 segundos por
-processo e após falha Redis sinalizada. Falha nessa conferência mantém o
-cache atual; não há garantia de detectar edição manual que preserve a
-contagem e não altere a versão.
-
-O Django Admin incrementa a versão persistida quando uma unidade muda. Falha no
-preflight do Redis bloqueia a alteração administrativa prevista.
+A escrita do mapa, quantidade e versão ocorre na mesma transação Redis. Se
+outro processo publicar durante a leitura do banco, a recarga relê os dados
+antes de tentar publicar novamente. Chat, fila, histórico, conversa, locks e
+filiais de compra continuam no PostgreSQL.
 
 ## Conversa bloqueada
 
 `runtime/cache_conversas_bloqueadas.py` acelera o bloqueio após encerramento,
 com TTL calculado a partir de `finalizou_em` e `bloqueio_dias` da política da
-etapa; a duração não é fixa dentro do módulo. Se Redis falhar, consulta o
-banco e tenta reparar o cache. Um miss normal no Redis retorna `False` sem
-essa consulta. Se Redis e banco falharem, levanta
+etapa. O encaminhamento final do Baratão define 90 dias. Se a chave estiver
+ausente ou o Redis falhar, consulta o banco e tenta repor o bloqueio pelo
+tempo restante. Se a confirmação no banco falhar, levanta
 `ValidacaoBloqueioConversaIndisponivel`, convertida em HTTP 503 no webhook.
 
 O par da chave é cliente e unidade. Esse bloqueio de conversa não é o mesmo que
@@ -124,14 +137,6 @@ Sem WAMID ou com contador Redis indisponível, esse tratamento também retorna
 200, sem fallback de contagem no banco ou em memória. Os 503 específicos de
 validação e persistência não usam esse limite.
 
-## Follow-up e cache
-
-O estado do follow-up não fica no Redis. Elegibilidade, lock, recibos e retomadas
-são lidos/persistidos diretamente no PostgreSQL. Limpar caches não zera
-`followup_stage` nem remove os registros de envio. O proativo consulta os
-bloqueios e eventos de flood persistidos no banco; o webhook mantém a cadeia
-Redis/banco/memória descrita acima.
-
 ## Reset de desenvolvimento
 
 `cache_reset.py` conserva o reset dos caches do chatbot usado pelo setup de
@@ -140,9 +145,12 @@ operacionais e tenta recarregar o mapa. Não executa `FLUSHDB`.
 
 ## Testes relacionados
 
-- `tests/unit/test_fluxo_turno_abc.py`;
-- `tests/unit/test_retry_essencial.py`;
-- `tests/unit/test_worker_flow_runtime.py`.
+- `tests/test_etapa1_pos_venda_postgres.py` cobre os ciclos do worker, inclusive
+  divergência da central e indisponibilidade no reparo.
+- `tests/admin_central_postgres.py` cobre provisionamento, edição, suspensão,
+  rollback e publicação após commit no Admin. Defina `BARATAO_TEST_REDIS_SOCKET`
+  com o socket Unix de um Redis exclusivo de testes para incluir o percurso
+  Admin → worker → webhook com publicação e leitura reais.
 
 Esses arquivos cobrem o núcleo transacional; consulte também
 [`tests/README.md`](../../tests/README.md).

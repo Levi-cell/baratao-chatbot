@@ -1,6 +1,6 @@
 """Apresentação dos motivos históricos e da tabela da configuração atual."""
 
-from core.integrations.whatsapp.messages.etapa6_messages import reconhecer_encerramento_etapa6
+from .encerramentos_legados import reconhecer_encerramento_etapa6
 from core.validacoes.encerramento_por_idade import (
     MOTIVO_IDADE_LEGADO,
     MOTIVO_SUPORTE_LEGADO,

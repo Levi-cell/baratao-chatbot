@@ -10,7 +10,9 @@ from core.validacoes.nome_titular import normalizar_nome_titular
 from core.integrations.whatsapp.messages.etapa1_messages import (
     MENSAGEM_PADRAO_ETAPA1, MENSAGEM_NOME_INVALIDO,
 )
-from core.integrations.whatsapp.messages.encaminhamento_pos_venda import MENSAGEM_ENCAMINHAMENTO
+from core.integrations.whatsapp.messages.encaminhamento_pos_venda import (
+    MENSAGEM_AMBOS_PRODUTOS, MENSAGEM_PRODUTO_NAO_INFORMADO,
+)
 from core.integrations.whatsapp.exceptions import ErroEnvioMeta
 from core.integrations.whatsapp.pywa_functions.pywa_senders.encaminhamento_pos_venda import montar_cartoes
 from core.integrations.whatsapp.pywa_functions.cliente import antes_do_primeiro_envio, conta_wa
@@ -28,10 +30,11 @@ def contexto(etapa=1, texto="123", tipo="text", turnos=0, apresentacao=False):
         "id_etapa_origem_transicao": etapa, "turnos_sem_avanco": turnos,
         "resposta_bot_para_mensagem_atual": None,
         "transicoes_permitidas": {
-            "nome_valido_cpf_presente": 3, "nome_valido_falta_cpf": 2, "midia_recebida": 11,
-            "humano_solicitado": 11, "limite_sem_avanco": 11,
+            "nome_valido_falta_cpf": 2, "midia_recebida": 7,
+            "humano_solicitado": 7, "limite_sem_avanco": 7,
         },
-        "central": {"telefone_sofas": "557592087803", "telefone_moveis": "557582467000"},
+        "central": {"telefone_sofas": "557592087803", "telefone_moveis": "557582467000",
+                    "phone_number_id": "999", "messaging_account_id": "100", "waac_id": None},
         "cadastro": {},
         "mensagem_cliente_atual": {"tipo_mensagem": tipo, "conteudo_texto": texto,
                                   "cliente_telefone": "5511999990000", "id_phone_unidade": "999"},
@@ -53,6 +56,11 @@ class Etapa1Tests(unittest.TestCase):
 
     def test_nomes_aceitos(self):
         for entrada, esperado in (
+            ("Olá, eu me chamo Ana Maria da Silva.", "Ana Maria da Silva"),
+            ("O nome dele é João-Pedro de Souza", "João-Pedro de Souza"),
+            ("Eu sou a Ana Costa", "Ana Costa"),
+            ("Nome do titular da compra é José dos Santos", "José dos Santos"),
+            ("Meu nome é Maria Silva e quero falar do pedido", "Maria Silva"),
             ("João da silva.", "João da silva"),
             ("João-Pedro da Silva", "João-Pedro da Silva"),
             ("João-Pedro da Silva.", "João-Pedro da Silva"),
@@ -63,7 +71,8 @@ class Etapa1Tests(unittest.TestCase):
                 self.assertEqual(normalizar_nome_titular(entrada), esperado)
 
     def test_nomes_invalidos(self):
-        for entrada in (None, "", " ", "123", "João 123", "João @ Silva", "João da Silva!",
+        for entrada in ("O nome dele é", "Eu me chamo Ana", "Eu sou de Salvador", "Ana de",
+                        "Eu sou João2 Silva", "Quero falar do pedido", None, "", " ", "123", "João 123", "João @ Silva", "João da Silva!",
                         ".João Silva", "João. Silva", "João Silva..", "João - Pedro Silva",
                         "-João Silva", "João- Silva", "João -- Silva", "João Silva-",
                         "João 😊 Silva", "João O'Connor", "João Silva .", "João"):
@@ -73,7 +82,8 @@ class Etapa1Tests(unittest.TestCase):
     def test_primeiro_contato_apresenta_regras_mesmo_com_midia_ou_humano(self):
         for tipo, texto in (("audio", None), ("image", None), ("text", "Quero um HUMANO"), ("text", "João da Silva")):
             envio = flow_sender(contexto(apresentacao=True, tipo=tipo, texto=texto, turnos=3))
-            self.assertEqual(envio["mensagem_bot"], MENSAGEM_PADRAO_ETAPA1)
+            self.assertRegex(envio["mensagem_bot"],r"^(Bom dia|Boa tarde|Boa noite)! Sou o Theo")
+            self.assertIn("nome completo do titular",envio["mensagem_bot"])
             self.assertEqual(envio["id_etapa_resultante"], 1)
             self.assertNotIn("evento_transicao", envio)
         self.wa.send_carousel.assert_not_called()
@@ -85,8 +95,8 @@ class Etapa1Tests(unittest.TestCase):
             self.assertNotIn("evento_transicao", envio)
         envio = flow_sender(contexto(turnos=3))
         self.assertEqual(envio["evento_transicao"], "limite_sem_avanco")
-        self.assertEqual(envio["id_etapa_resultante"], 11)
-        self.assertEqual(envio["mensagem_bot"], MENSAGEM_ENCAMINHAMENTO)
+        self.assertEqual(envio["id_etapa_resultante"], 7)
+        self.assertEqual(envio["mensagem_bot"], MENSAGEM_PRODUTO_NAO_INFORMADO)
         self.wa.send_carousel.assert_called_once()
 
     def test_nome_valido_avanca_para_cpf(self):
@@ -100,10 +110,25 @@ class Etapa1Tests(unittest.TestCase):
             with self.subTest(tipo=tipo):
                 envio = flow_sender(contexto(tipo=tipo, texto=None))
                 self.assertEqual(envio["evento_transicao"], "midia_recebida")
+                self.assertEqual(envio["mensagem_bot"], MENSAGEM_PRODUTO_NAO_INFORMADO)
+
+    def test_midia_apos_escolher_ambos_usa_mensagem_dos_dois_produtos(self):
+        c = contexto(etapa=4, tipo="audio", texto=None)
+        c["produto"] = "ambos"
+        envio = flow_sender(c)
+        self.assertEqual(envio["evento_transicao"], "midia_recebida")
+        self.assertEqual(envio["mensagem_bot"], MENSAGEM_AMBOS_PRODUTOS)
 
     def test_humano_em_qualquer_frase_sem_diferenciar_caixa(self):
         for texto in ("Humano", "Quero falar com um HUMANO, por favor", "tem atendimento humano?"):
             self.assertEqual(flow_sender(contexto(texto=texto))["evento_transicao"], "humano_solicitado")
+
+    def test_aviso_de_avarias_depende_do_assunto_da_conversa(self):
+        from core.integrations.whatsapp.messages.encaminhamento_pos_venda import AVISO_ASSISTENCIA, mensagem_de_contato
+        for assunto in ("assistencia", "misto", "entrega", "montador", "outros", None):
+            with self.subTest(assunto=assunto):
+                texto = mensagem_de_contato("Selecione o setor.", assunto)
+                self.assertEqual(AVISO_ASSISTENCIA in texto, assunto in ("assistencia", "misto"))
 
     def test_cartoes_ordem_destinos_e_imagens(self):
         cards = [c.to_dict(i) for i, c in enumerate(montar_cartoes(contexto()))]
@@ -114,6 +139,7 @@ class Etapa1Tests(unittest.TestCase):
         )):
             card = cards[i]
             self.assertEqual(card["card_index"], i)
+            self.assertNotIn("body", card)
             self.assertEqual(card["action"]["parameters"]["display_text"], rotulo)
             self.assertTrue(card["action"]["parameters"]["url"].startswith(f"https://wa.me/{numero}?text="))
             self.assertTrue(card["header"]["image"]["link"].endswith(imagem))
@@ -163,7 +189,7 @@ class Etapa1Tests(unittest.TestCase):
 
     def test_etapas_antigas_nao_sao_reutilizadas_por_engano(self):
         with self.assertRaises(NotImplementedError):
-            flow_sender(contexto(etapa=7))
+            flow_sender(contexto(etapa=8))
         self.wa.send_message.assert_not_called()
 
 
@@ -203,7 +229,7 @@ class CacheBloqueioTests(unittest.TestCase):
 
 class TransporteTests(unittest.TestCase):
     def test_carrossel_preserva_acao_antes_do_envio_uma_vez(self):
-        with patch("core.integrations.whatsapp.pywa_functions.cliente.WhatsApp") as sdk:
+        with patch("core.integrations.whatsapp.pywa_functions.cliente.WhatsAppCentral") as sdk:
             acao = MagicMock()
             with antes_do_primeiro_envio(acao):
                 wa = conta_wa("999", token="token-falso")
@@ -224,7 +250,7 @@ class TransporteTests(unittest.TestCase):
                 "messages": [{"id": "wamid.simulado"}]})
         with patch.dict(os.environ, ENV), httpx.Client(transport=httpx.MockTransport(responder)) as session:
             wa = WhatsApp(phone_id="999", token="token-falso", session=session)
-            resposta = wa.send_carousel(to="5511999990000", body=MENSAGEM_ENCAMINHAMENTO, cards=montar_cartoes(contexto()))
+            resposta = wa.send_carousel(to="5511999990000", body=MENSAGEM_PRODUTO_NAO_INFORMADO, cards=montar_cartoes(contexto()))
         self.assertEqual(resposta.id, "wamid.simulado")
         self.assertEqual(len(capturados), 1)
         payload = capturados[0]

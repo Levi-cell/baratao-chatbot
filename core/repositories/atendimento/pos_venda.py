@@ -45,3 +45,11 @@ def registrar_contatos_encaminhados(id_conversa, telefone_moveis, telefone_sofas
     """, (telefone_moveis, telefone_sofas, id_conversa))
     if cursor.rowcount != 1:
         raise ValueError("Atendimento ausente ao confirmar contatos.")
+
+
+def registrar_detalhes(id_conversa, detalhes, cursor):
+    cursor.execute("""
+        UPDATE chatbot.atendimento_pos_venda SET detalhes = %s WHERE id_conversa = %s;
+    """, (detalhes, id_conversa))
+    if cursor.rowcount != 1:
+        raise ValueError("Atendimento ausente ao confirmar os detalhes.")

@@ -1,8 +1,14 @@
+from core.repositories.atendimento.solicitacao_contato import pendencia_ativa
+from core.repositories.atendimento.identidade_cliente import buscar_alias, serializar_chave, cliente_telefone
+from core.validacoes.compartilhamento_contato import telefone_compartilhado
+from core.integrations.whatsapp.identidade_cliente import extrair_identidade
+from core.identidade_atendimento import IdentidadeDivergente, conciliar_contato_comprovado, resolver_cliente, rotacionar_bsuid
+from core.repositories.atendimento.identidade_cliente import buscar_central, dados_telefone, impedimento
 import logging
 from datetime import datetime, timezone
 
 from core.logging_config import short_value
-from core.repositories.atendimento.entrada_fila import inserir_entrada_fila
+from core.repositories.atendimento.entrada_fila import entrada_ja_registrada, inserir_entrada_fila
 from core.repositories.seguranca.turno_cliente import (
     avaliar_turno_cliente_para_fila,
 )
@@ -19,9 +25,39 @@ def inserir_dados_na_tabela_fila(dados, cursor):
             "reason": "dados_invalidos",
         }
 
+    linha = buscar_central(dados["id_phone_unidade"], dados.get("conta_origem"), cursor,
+                          incluir_suspensa=dados["tipo_mensagem"] == "system")
+    if not linha:
+        return {"status": "ignored", "reason": "central_incompativel"}
+    central = dados["id_central"] = linha[0]
+    if dados["tipo_mensagem"] == "system":
+        sistema = dados["sistema"]
+        if sistema.get("type") in {"user_changed_user_id", "user_changed_number"}:
+            rotacionar_bsuid(central, sistema, dados["id_hash_msg"], cursor)
+        return {"status": "ignored", "reason": "evento_tecnico"}
+    if entrada_ja_registrada(dados["id_hash_msg"], cursor):
+        return {"status": "ignored", "reason": "conflito_unico"}
+    uid = dados.get("user_id_origem")
+    contato = _prova_solicitada(dados, uid, cursor)
+    # O envelope do cartão pode revelar simultaneamente BSUID e telefone antigo.
+    # Só a prova vinculada à solicitação permite resolver primeiro pelo provisório.
+    origem = {**dados, "cliente_telefone": None} if contato else dados
+    cliente = dados["id_cliente"] = resolver_cliente(origem, central, cursor)
+    ids = [v for v in (dados_telefone(cliente, cursor), uid, contato) if v]
+    if impedimento(central, cliente, ids, cursor):
+        return {"status": "ignored", "reason": "cliente_impedido"}
+
+    canonica = None
+    if contato:
+        serializar_chave(f"wa:{contato}", cursor)
+        canonica = cliente_telefone(contato, cursor)
+        if canonica and canonica != cliente and impedimento(central, canonica, ids, cursor):
+            return {"status": "ignored", "reason": "cliente_impedido"}
+        dados["interativo"]["_telefone_verificado"] = contato
+
     turno = avaliar_turno_cliente_para_fila(
         cursor=cursor,
-        cliente_telefone=dados["cliente_telefone"],
+        id_cliente=cliente,
         id_phone_unidade=dados["id_phone_unidade"],
         received_data_hora=dados["received_data_hora"],
         usar_lock=True,
@@ -54,9 +90,22 @@ def inserir_dados_na_tabela_fila(dados, cursor):
             "reason": turno["motivo"],
         }
 
+    if canonica and canonica != cliente:
+        if not dados.get("assinatura_verificada"):
+            return {"status": "ignored", "reason": "contato_exige_assinatura"}
+        destino = avaliar_turno_cliente_para_fila(cursor, canonica, dados["id_phone_unidade"],
+                                                 dados["received_data_hora"], usar_lock=True)
+        if not destino["pode_enfileirar"]:
+            return {"status": "ignored", "reason": destino["motivo"]}
+        if not conciliar_contato_comprovado(dados, cliente, canonica, uid, cursor):
+            return {"status": "ignored", "reason": "contato_exige_conciliacao"}
+        dados["id_cliente"] = canonica
+
     linhas_inseridas = inserir_entrada_fila(dados, cursor)
 
     if linhas_inseridas == 0:
+        if canonica and canonica != cliente:
+            raise IdentidadeDivergente("Conciliação revertida por reentrega concorrente.")
         logger.info(
             "fila_insert_ignorado | motivo=conflito_unico acao=nao_inserir id_msg=%s cliente=%s phone_number_id=%s",
             short_value(dados["id_hash_msg"]),
@@ -72,6 +121,23 @@ def inserir_dados_na_tabela_fila(dados, cursor):
         "status": "inserted",
         "reason": None,
     }
+
+
+def _prova_solicitada(dados, uid, cursor):
+    if not uid or dados["tipo_mensagem"] != "contacts":
+        return None
+    central = dados["id_central"]
+    serializar_chave(f"bs:{central}:{uid}", cursor)
+    alias = buscar_alias(central, uid, cursor)
+    if not alias or not alias[1]:
+        return None
+    pendencia = pendencia_ativa(central, alias[0], uid, cursor)
+    if not pendencia:
+        return None
+    prova = telefone_compartilhado(dados["interativo"] or {}, uid, pendencia[0])
+    if prova and dados.get("cliente_telefone") not in (None, prova):
+        raise IdentidadeDivergente("O telefone do envelope diverge do cartão solicitado.")
+    return prova
 
 
 def extrair_dados_whatsapp(data):
@@ -90,10 +156,9 @@ def extrair_dados_whatsapp(data):
         unidade_telefone = metadata.get("display_phone_number")
         id_phone_unidade = metadata.get("phone_number_id")
 
-        contacts = value.get("contacts", [{}])[0]
-        cliente_telefone = contacts.get("wa_id")
-
         message = value.get("messages", [{}])[0]
+        identidade = extrair_identidade(value, message)
+        cliente_telefone = identidade.wa_id
         message_id = message.get("id")
         timestamp = message.get("timestamp")
         tipo = message.get("type")
@@ -108,7 +173,7 @@ def extrair_dados_whatsapp(data):
         )
 
         if not all([
-            cliente_telefone,
+            cliente_telefone or identidade.user_id,
             message_id,
             id_phone_unidade,
             unidade_telefone,
@@ -120,6 +185,10 @@ def extrair_dados_whatsapp(data):
             }
 
         return {
+            "user_id_origem": identidade.user_id, "username_origem": identidade.username,
+            "conta_origem": entry.get("id"), "sistema": message.get("system", {}),
+            "interativo": ({k: message[k] for k in ("type","from_user_id","context","contacts") if k in message}
+                           if tipo == "contacts" else message.get("interactive")),
             "status": "pending",
             "retry_count": 0,
             "next_attempt_at": received_data_hora,

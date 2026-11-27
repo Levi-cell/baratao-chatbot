@@ -1,0 +1,43 @@
+-- Fluxo sequencial de pós-venda. Apenas o encaminhamento bloqueia por 90 dias.
+INSERT INTO chatbot.etapa (id_etapa, nome_etapa, encerra_automaticamente, bloqueio_dias) VALUES
+    (1, 'nome_titular', false, 0),
+    (2, 'cpf_titular', false, 0),
+    (3, 'produto', false, 0),
+    (4, 'assunto', false, 0),
+    (5, 'pedidos', false, 0),
+    (6, 'visita_loja', false, 0),
+    (7, 'visita_pendente', true, 0),
+    (8, 'detalhes', false, 0),
+    (9, 'encaminhamento', true, 90);
+
+INSERT INTO chatbot.etapa_transicao (id_etapa_origem, evento, id_etapa_destino) VALUES
+    (1, 'nome_valido_falta_cpf', 2),
+    (1, 'nome_valido_cpf_presente', 3),
+    (2, 'cpf_valido', 3),
+    (3, 'produto_escolhido', 4),
+    (4, 'assunto_escolhido', 5),
+    (5, 'pedidos_assistencia', 6),
+    (5, 'nota_perdida_assistencia', 6),
+    (5, 'pedidos_demais_assuntos', 8),
+    (5, 'nota_perdida_demais_assuntos', 8),
+    (6, 'loja_nao_visitada', 7),
+    (6, 'loja_visitada', 8),
+    (8, 'situacao_informada', 9),
+    (1, 'midia_recebida', 9),
+    (1, 'humano_solicitado', 9),
+    (1, 'limite_sem_avanco', 9),
+    (2, 'midia_recebida', 9),
+    (2, 'humano_solicitado', 9),
+    (2, 'limite_sem_avanco', 9),
+    (3, 'midia_recebida', 9),
+    (3, 'humano_solicitado', 9),
+    (3, 'limite_sem_avanco', 9),
+    (4, 'midia_recebida', 9),
+    (4, 'humano_solicitado', 9),
+    (4, 'limite_sem_avanco', 9),
+    (5, 'midia_recebida', 9),
+    (5, 'humano_solicitado', 9),
+    (5, 'limite_sem_avanco', 9),
+    (6, 'midia_recebida', 9),
+    (8, 'midia_recebida', 9);
+

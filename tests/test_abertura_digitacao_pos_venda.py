@@ -22,7 +22,7 @@ class AberturaDigitacaoTests(unittest.TestCase):
         self.sdk.send_message.side_effect = enviado
         self.sdk.send_carousel.side_effect = enviado
         for p in (patch.dict(os.environ, ENV),
-                  patch("core.integrations.whatsapp.pywa_functions.cliente.WhatsApp",
+                  patch("core.integrations.whatsapp.pywa_functions.cliente.WhatsAppCentral",
                         return_value=self.sdk)):
             p.start()
             self.addCleanup(p.stop)
@@ -48,32 +48,13 @@ class AberturaDigitacaoTests(unittest.TestCase):
                 self.processar(ctx)
                 self.assertEqual(self.ordem, ["digitando", "resposta"])
 
-    def test_retorno_com_nome_e_cpf_apresenta_produto_na_etapa3(self):
-        ctx = contexto(etapa=3, apresentacao=True, texto="Oi")
-        ctx["cadastro"] = {"nome_titular": "João da Silva", "cpf_titular": "01234567890"}
-        envio = self.processar(ctx)
-        self.assertEqual(envio["id_etapa_resultante"], 3)
-        self.assertEqual(envio["mensagem_bot"],
-                         "Olá, João da Silva! Sobre qual tipo de produto você quer falar?")
-        self.assertEqual(len(envio["interativo"]["action"]["buttons"]), 3)
-        self.assertNotIn("evento_transicao", envio)
-        self.assertEqual(self.ordem, ["digitando", "resposta"])
-
-    def test_cadastro_parcial_apresenta_cpf_sem_perguntar_nome_novamente(self):
-        ctx = contexto_cpf("mensagem que abre a nova conversa")
-        ctx["apresentacao_pendente"] = True
-        envio = self.processar(ctx)
-        self.assertEqual(envio["id_etapa_resultante"], 2)
-        self.assertIn("Olá, João da Silva!", envio["mensagem_bot"])
-        self.assertNotIn("cpf_titular", envio)
-        self.assertNotIn("evento_transicao", envio)
-
-    def test_nome_coletado_com_cpf_global_presente_pula_para_produto(self):
+    def test_nome_coletado_sempre_pede_cpf_mesmo_com_cadastro_antigo(self):
         ctx = contexto(texto="João da Silva")
         ctx["cadastro"] = {"cpf_titular": "01234567890"}
         envio = self.processar(ctx)
-        self.assertEqual(envio["id_etapa_resultante"], 3)
-        self.assertEqual(envio["evento_transicao"], "nome_valido_cpf_presente")
+        self.assertEqual(envio["id_etapa_resultante"], 2)
+        self.assertIn("CPF do titular", envio["mensagem_bot"])
+        self.assertEqual(self.ordem, ["digitando", "resposta"])
 
     def test_replay_nao_digita_nem_envia(self):
         ctx = contexto()
@@ -104,7 +85,7 @@ class AberturaDigitacaoTests(unittest.TestCase):
 
     def test_etapa11_nao_pode_voltar_a_saudacao(self):
         with self.assertRaises(NotImplementedError):
-            self.processar(contexto(etapa=11, apresentacao=True))
+            self.processar(contexto(etapa=7, apresentacao=True))
         self.assertEqual(self.ordem, [])
 
     def test_escolha_de_produto_envia_assunto_com_digitacao(self):

@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+from redis.exceptions import WatchError
 
 from core.database.connection_aws import get_conn
 from core.cache.redis_client import get_redis_safe
@@ -8,6 +9,7 @@ from core.logging_config import short_value
 from core.repositories.unidades.cache_control import buscar_versao_cache_unidades
 from core.repositories.unidades.consultas import (
     buscar_id_unidade_por_phone_id,
+    exigir_unidade_habilitada_por_phone_id,
     pegar_unidades,
 )
 
@@ -94,7 +96,7 @@ def recarregar_cache_unidades_ou_erro(cursor=None):
     except Exception as exc:
         _marcar_redis_falhou()
         logger.exception(
-            "cache_recarregar_falhou | origem=admin acao=bloquear_alteracao erro=%s",
+            "cache_recarregar_falhou | origem=admin acao=sinalizar_cache_pendente erro=%s",
             exc,
         )
         raise CacheUnidadesIndisponivel(
@@ -108,16 +110,27 @@ def recarregar_cache_unidades_ou_erro(cursor=None):
 
 def carregar_cache_redis(cursor, redis_retries=3, redis_delay=2):
     r = get_redis_safe(retries=redis_retries, delay=redis_delay)
-    unidades = _normalizar_unidades(pegar_unidades(cursor))
-    versao_banco = buscar_versao_cache_unidades(cursor)
-    total = _salvar_cache(r, unidades, versao_banco)
+    # Outro processo pode publicar uma edição do Admin enquanto lemos o banco.
+    # Se isso ocorrer, releia os dados antes de substituir o mapa inteiro.
+    for tentativa in range(2):
+        with r.pipeline() as pipe:
+            try:
+                pipe.watch(CACHE_DB_VERSION_KEY)
+                versao_banco = buscar_versao_cache_unidades(cursor)
+                unidades = _normalizar_unidades(pegar_unidades(cursor))
+                pipe.multi()
+                total = _salvar_cache(pipe, unidades, versao_banco)
+                break
+            except WatchError:
+                if tentativa == 1:
+                    raise
 
     _marcar_versao_conferida()
     logger.info("cache_atualizado | acao=salvar_redis unidades=%s versao=%s", total, versao_banco)
     return total
 
 
-def obter_id_unidade_redis_ou_plsql(id_phone_unidade, cursor):
+def obter_id_unidade_redis_ou_plsql(id_phone_unidade, cursor, *, central_da_fila=None):
     phone_key = _normalizar_phone_number_id(id_phone_unidade)
 
     if phone_key is None:
@@ -130,18 +143,14 @@ def obter_id_unidade_redis_ou_plsql(id_phone_unidade, cursor):
         if _cache_valido(r):
             id_unidade = r.hget(REDIS_KEY, phone_key)
 
-            if _id_unidade_valido(id_unidade):
+            if _id_unidade_valido(id_unidade) and (central_da_fila is None or int(id_unidade) == central_da_fila):
                 return int(id_unidade)
 
-            raise UnidadeNaoEncontrada(f"Unidade nao encontrada no cache ativo: {phone_key}")
-
-        logger.warning(
-            "cache_invalido | acao=fallback_banco origem=worker phone_number_id=%s",
-            short_value(phone_key),
-        )
-
-    except UnidadeNaoEncontrada:
-        raise
+            logger.info("cache_central_miss | acao=confirmar_no_banco origem=worker phone_number_id=%s",
+                        short_value(phone_key))
+        else:
+            logger.warning("cache_invalido | acao=fallback_banco origem=worker phone_number_id=%s",
+                           short_value(phone_key))
 
     except Exception as exc:
         _marcar_redis_falhou()
@@ -151,14 +160,17 @@ def obter_id_unidade_redis_ou_plsql(id_phone_unidade, cursor):
             exc,
         )
 
-    id_unidade = buscar_id_unidade_por_phone_id(phone_key, cursor)
-
-    _tentar_recarregar_cache(cursor, origem="worker")
-
-    if not _id_unidade_valido(id_unidade):
+    # O banco distingue ausência de suspensão, que preserva a mensagem pendente.
+    id_unidade = exigir_unidade_habilitada_por_phone_id(phone_key, cursor)
+    if central_da_fila is not None and id_unidade != central_da_fila:
+        # O número pode ter sido alterado no Admin depois do dequeue. No retry,
+        # o dequeue volta a ler o remetente da central vinculada à mensagem.
+        raise RuntimeError("Remetente da central mudou durante o processamento da fila")
+    if id_unidade is None:
         raise UnidadeNaoEncontrada(f"Unidade nao encontrada: {phone_key}")
 
-    return int(id_unidade)
+    _tentar_recarregar_cache(cursor, origem="worker")
+    return id_unidade
 
 
 def unidade_esta_ativa(phone_number_id):
@@ -299,10 +311,9 @@ def _tentar_recarregar_cache(cursor, origem):
         return None
 
 
-def _salvar_cache(r, unidades, versao_banco):
+def _salvar_cache(pipe, unidades, versao_banco):
     total = len(unidades)
 
-    pipe = r.pipeline()
     pipe.delete(CACHE_TEMP_KEY)
 
     if total > 0:
@@ -326,9 +337,6 @@ def _cache_valido(r):
             return False
 
         total_esperado = int(versao)
-
-        if total_esperado == 0:
-            return True
 
         return r.hlen(REDIS_KEY) == total_esperado
 

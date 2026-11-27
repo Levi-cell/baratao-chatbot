@@ -19,7 +19,7 @@ def inserir_historico_mensagem_cliente(mensagem, id_conversa, id_etapa, cursor):
         INSERT INTO chatbot.historico_mensagens
             (id_conversa, id_etapa, received_data_hora, quem_enviou, id_hash_msg,
              id_mensagem_fila, tipo_mensagem, conteudo_texto, interativo)
-        SELECT %s, %s, %s, 'cliente', %s, f.id_mensagem, f.tipo_mensagem, f.conteudo_texto, f.interativo
+        SELECT %s, %s, %s, 'cliente', %s, f.id_mensagem, f.tipo_mensagem, f.conteudo_texto, CASE WHEN f.tipo_mensagem='contacts' THEN NULL ELSE f.interativo END
         FROM chatbot.fila_mensagens f WHERE f.id_mensagem = %s AND f.id_conversa = %s
         ON CONFLICT (id_hash_msg) DO NOTHING
         RETURNING id_mensagem, received_data_hora, id_etapa;
@@ -46,16 +46,24 @@ def inserir_historico_mensagem_bot(contexto, envio, cursor):
         return existente["id_mensagem"], existente["received_data_hora"], False
     if not envio.get("id_hash_msg_bot"):
         raise ValueError("Meta não retornou o WAMID da resposta.")
+    primeira = _inserir_parte_resposta(contexto["id_conversa"], entrada, envio, 1, cursor)
+    if envio.get("segunda_resposta"):
+        segunda = {**envio, **envio["segunda_resposta"]}
+        _inserir_parte_resposta(contexto["id_conversa"], entrada, segunda, 2, cursor)
+    return (*primeira, True)
+
+
+def _inserir_parte_resposta(id_conversa, entrada, envio, parte, cursor):
     interativo = dict(envio.get("interativo") or {})
     # Metadado interno de recuperação; não é enviado como parte do payload Meta.
     interativo["_fluxo"] = {"evento": envio.get("evento_transicao")}
     cursor.execute("""
         INSERT INTO chatbot.historico_mensagens
             (id_conversa, id_etapa, received_data_hora, quem_enviou, id_hash_msg,
-             id_mensagem_fila, id_hash_cliente_origem, tipo_mensagem, conteudo_texto, interativo, status_envio)
-        VALUES (%s, %s, clock_timestamp(), 'bot', %s, %s, %s, %s, %s, %s, 'sent')
+             id_mensagem_fila, id_hash_cliente_origem, tipo_mensagem, conteudo_texto, interativo, status_envio, tipo_destinatario, valor_destinatario, parte_resposta)
+        VALUES (%s, %s, clock_timestamp(), 'bot', %s, %s, %s, %s, %s, %s, 'sent', %s, %s, %s)
         RETURNING id_mensagem, received_data_hora;
-    """, (contexto["id_conversa"], envio["id_etapa_resultante"], envio["id_hash_msg_bot"],
+    """, (id_conversa, envio["id_etapa_resultante"], envio["id_hash_msg_bot"],
           entrada["id_mensagem_fila"], entrada["id_hash_msg"], envio["tipo_mensagem"],
-          envio["mensagem_bot"], Jsonb(interativo)))
-    return (*cursor.fetchone(), True)
+          envio["mensagem_bot"], Jsonb(interativo), envio.get("tipo_destinatario"), envio.get("valor_destinatario"), parte))
+    return cursor.fetchone()

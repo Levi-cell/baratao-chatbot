@@ -19,14 +19,17 @@ def unidade_habilitada(id_unidade, cursor):
 
 
 def exigir_unidade_habilitada_por_phone_id(phone_number_id, cursor):
-    """Não confiar em um cache positivo antes de iniciar ou enviar o atendimento."""
+    """Retorna o ID ativo, None para ausente e sinaliza a suspensão ao worker."""
     cursor.execute(
-        "SELECT ativa IS TRUE FROM chatbot.central_pos_venda WHERE phone_number_id = %s",
+        "SELECT id_central, ativa FROM chatbot.central_pos_venda WHERE phone_number_id = %s",
         (phone_number_id,),
     )
     row = cursor.fetchone()
-    if row is not None and not row[0]:
+    if row is None:
+        return None
+    if not row[1]:
         raise UnidadeDesativada("Central de pós-venda desativada")
+    return row[0]
 
 
 def pegar_unidades(cursor):
@@ -58,3 +61,13 @@ def buscar_id_unidade_por_phone_id(phone_number_id, cursor):
         bool(resultado),
     )
     return resultado[0] if resultado else None
+
+
+def buscar_id_registro_meta(phone_number_id, cursor):
+    """Seleciona o recurso para registrar ou desregistrar o número comercial."""
+    cursor.execute("""
+        SELECT COALESCE(waac_id, phone_number_id)
+        FROM chatbot.central_pos_venda WHERE phone_number_id=%s
+    """, (phone_number_id,))
+    linha = cursor.fetchone()
+    return linha[0] if linha else phone_number_id

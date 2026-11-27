@@ -50,15 +50,14 @@ def carregar_estado_banco(*, connection_factory=None):
         linhas_bloqueios = listar_bloqueios_para_comparacao(cursor)
         bloqueios = [
             {
-                "id_bloqueio": linha[0],
-                "id_cliente": linha[1],
-                "nome_cliente": linha[2] or linha[9],
-                "wa_id_cliente": _normalizar_id(linha[3]),
-                "id_unidade": linha[4],
-                "phone_id_registrado": _normalizar_id(linha[5]),
-                "nome_unidade": linha[6],
-                "waba_id": _normalizar_id(linha[7]),
-                "phone_id_unidade": _normalizar_id(linha[8]),
+                "wa_id_cliente": _normalizar_id(linha[0]),
+                "id_unidade": linha[1],
+                "nome_unidade": linha[2],
+                "waba_id": _normalizar_id(linha[3]),
+                "phone_id_unidade": _normalizar_id(linha[4]),
+                "phone_id_registrado": _normalizar_id(linha[4]),
+                "id_cliente": linha[5],
+                "nome_cliente": linha[6],
             }
             for linha in linhas_bloqueios
         ]
@@ -73,9 +72,9 @@ def carregar_estado_banco(*, connection_factory=None):
 def listar_usuarios_bloqueados_meta(phone_id_unidade):
     """Lista todos os bloqueados de um phone ID usando paginação do PyWa."""
     configurar_ambiente_local()
-    from core.integrations.whatsapp.pywa_functions.cliente import conta_wa
+    from core.integrations.whatsapp.tools.usuarios import cliente_de_bloqueio
 
-    cliente_wa = conta_wa(str(phone_id_unidade))
+    cliente_wa = cliente_de_bloqueio(phone_id_unidade)
     return cliente_wa.get_blocked_users().all(sleep=0.2)
 
 
@@ -416,9 +415,9 @@ def _descricao_unidade(item):
 
 def _extrair_wa_id_bloqueado(usuario):
     if isinstance(usuario, dict):
-        wa_id = usuario.get("wa_id") or usuario.get("id")
+        wa_id = usuario.get("wa_id") or usuario.get("user_id") or usuario.get("id")
     else:
-        wa_id = getattr(usuario, "wa_id", usuario)
+        wa_id = getattr(usuario, "wa_id", None) or getattr(usuario, "bsuid", None) or (usuario if isinstance(usuario, str) else None)
     return _normalizar_id(wa_id)
 
 

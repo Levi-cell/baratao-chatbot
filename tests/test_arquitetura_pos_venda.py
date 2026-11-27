@@ -17,8 +17,8 @@ def contexto_efeitos(etapa):
     }
     return {
         "id_cliente": 7, "id_conversa": 8, "id_etapa_origem_transicao": etapa,
-        "transicoes_permitidas": dict(mapas.get(etapa, {}), midia_recebida=11,
-                                     humano_solicitado=11, limite_sem_avanco=11),
+        "transicoes_permitidas": dict(mapas.get(etapa, {}), midia_recebida=7,
+                                     humano_solicitado=7, limite_sem_avanco=7),
     }
 
 
@@ -76,7 +76,7 @@ class EfeitosPorEtapaTests(unittest.TestCase):
                 with self.subTest(etapa=etapa, evento=evento):
                     self.cursor.reset_mock()
                     self.assertEqual(self.persistir(
-                        etapa, evento_transicao=evento, id_etapa_resultante=11,
+                        etapa, evento_transicao=evento, id_etapa_resultante=7,
                         encaminhado_moveis="557582467000", encaminhado_sofas="557592087803",
                     ), {"encaminhado": True})
                     self.cursor.execute.assert_called_once()
@@ -85,7 +85,7 @@ class EfeitosPorEtapaTests(unittest.TestCase):
 
     def test_presenca_de_chave_na_etapa_errada_nao_autoriza_escrita(self):
         casos = (
-            (11, {"evento_transicao": "nome_ausente", "id_etapa_resultante": 1,
+            (7, {"evento_transicao": "nome_ausente", "id_etapa_resultante": 1,
                   "nome_titular": "João da Silva"}),
             (1, {"evento_transicao": "nome_valido_falta_cpf", "id_etapa_resultante": 2,
                  "cpf_titular": "01234567890"}),
@@ -126,7 +126,7 @@ class EfeitosPorEtapaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.persistir(1, evento_transicao="nome_valido_falta_cpf", id_etapa_resultante=2)
         with self.assertRaises(ValueError):
-            self.persistir(1, evento_transicao="midia_recebida", id_etapa_resultante=11,
+            self.persistir(1, evento_transicao="midia_recebida", id_etapa_resultante=7,
                            encaminhado_moveis="557582467000")
         self.cursor.execute.assert_not_called()
 

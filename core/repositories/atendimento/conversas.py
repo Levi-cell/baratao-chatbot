@@ -15,13 +15,10 @@ def inserindo_em_conversa_caso_seja_nova(id_cliente, id_unidade, cursor):
     id_chat = cursor.fetchone()[0]
     cursor.execute("""
         INSERT INTO chatbot.conversa (id_chat, id_central, id_etapa_atual)
-        SELECT %s, %s,
-               CASE WHEN NULLIF(btrim(nome_titular), '') IS NULL THEN 1
-                    WHEN cpf_titular IS NULL THEN 2 ELSE 3 END
-        FROM chatbot.cliente WHERE id_cliente = %s
+        VALUES (%s, %s, 1)
         ON CONFLICT (id_chat) WHERE status_ativa DO NOTHING
         RETURNING id_conversa;
-    """, (id_chat, id_unidade, id_cliente))
+    """, (id_chat, id_unidade))
     row = cursor.fetchone()
     if not row:
         cursor.execute("SELECT id_conversa FROM chatbot.conversa WHERE id_chat = %s AND status_ativa", (id_chat,))
@@ -29,12 +26,9 @@ def inserindo_em_conversa_caso_seja_nova(id_cliente, id_unidade, cursor):
     if not row:
         raise RuntimeError("Não foi possível criar ou localizar a conversa ativa.")
     cursor.execute("""
-        INSERT INTO chatbot.atendimento_pos_venda
-            (id_conversa, nome_titular, cpf_titular, cidade_loja_compra)
-        SELECT %s, nome_titular, cpf_titular, cidade_loja_compra
-        FROM chatbot.cliente WHERE id_cliente = %s
+        INSERT INTO chatbot.atendimento_pos_venda (id_conversa) VALUES (%s)
         ON CONFLICT (id_conversa) DO NOTHING;
-    """, (row[0], id_cliente))
+    """, (row[0],))
     return row[0]
 
 
@@ -55,7 +49,7 @@ def buscar_estado_conversa(id_cliente, id_unidade, cursor):
     cursor.execute("""
         SELECT c.id_conversa, c.id_etapa_atual, c.status_ativa, c.finalizou_em,
                CASE WHEN c.status_ativa THEN 'ativa'
-                    WHEN e.bloqueio_dias > 0 AND c.finalizou_em >
+                    WHEN e.bloqueio_dias > 0 AND c.motivo_encerramento IS DISTINCT FROM 'visita_pendente' AND c.finalizou_em >
                          CURRENT_TIMESTAMP - e.bloqueio_dias * INTERVAL '1 day'
                     THEN 'bloqueada' ELSE 'liberada' END,
                c.last_message_from, c.turnos_sem_avanco

@@ -14,7 +14,7 @@ def _normalizar_meta_graph_api_version(value):
 
     if not _META_GRAPH_API_VERSION_PATTERN.fullmatch(version):
         raise RuntimeError(
-            "Valor invalido em META_GRAPH_API_VERSION: use o formato 26.0, "
+            "Valor invalido em META_GRAPH_API_VERSION: use o formato 27.0, "
             "sem o prefixo v"
         )
 
@@ -47,7 +47,7 @@ def construir_url_graph_api(caminho):
     if not caminho:
         raise ValueError("caminho da Graph API nao informado")
 
-    # O ambiente armazena "26.0"; o prefixo "v" pertence somente à URL.
+    # O prefixo "v" pertence à URL da Graph API.
     return (
         "https://graph.facebook.com/"
         f"v{get_meta_graph_api_version()}/{caminho}"

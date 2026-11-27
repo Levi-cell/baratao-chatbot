@@ -62,65 +62,24 @@ def buscar_unidade(id_unidade, cursor):
 
 
 def listar_conversas(id_unidade, inicio, fim, cursor):
-    p_contato = [id_unidade]
-    filtro_contato = _periodo('h0.received_data_hora', inicio, fim, p_contato)
-    p_funil = []
-    filtro_funil = _periodo('f.enviado_em', inicio, fim, p_funil)
-    p_avaliacao = []
-    filtro_avaliacao = _periodo('p.criado_em', inicio, fim, p_avaliacao)
-    p_atividade = []
-    filtro_atividade = _periodo('h.received_data_hora', inicio, fim, p_atividade)
+    parametros = [id_unidade]
+    periodo = _periodo("h.received_data_hora", inicio, fim, parametros)
     cursor.execute(f"""
-        WITH conversas_periodo AS (
-            SELECT c.*,
-                   ROW_NUMBER() OVER (PARTITION BY c.id_cliente ORDER BY c.iniciou_em DESC, c.id_conversa DESC) AS ordem,
-                   ARRAY_AGG(c.id_conversa) OVER (PARTITION BY c.id_cliente) AS ids_conversa_periodo
-              FROM chatbot.conversa c
-             WHERE c.id_unidade = %s
-               AND EXISTS (
-                   SELECT 1 FROM chatbot.historico_mensagens h0
-                    WHERE h0.id_conversa = c.id_conversa
-                      AND h0.quem_enviou = 'cliente' {filtro_contato}
-               )
+        WITH atividade AS (
+            SELECT DISTINCT ON (c.id_conversa)
+                ch.id_cliente,c.id_conversa,c.iniciou_em,c.id_etapa_atual,
+                h.received_data_hora AS ultima_atividade,h.conteudo_texto AS ultima_mensagem,
+                h.id_mensagem AS ultima_mensagem_id
+            FROM chatbot.conversa c JOIN chatbot.chat ch USING(id_chat)
+            JOIN chatbot.historico_mensagens h USING(id_conversa)
+            WHERE c.id_central=%s {periodo} AND (h.quem_enviou='cliente' OR h.status_envio='sent')
+            ORDER BY c.id_conversa,h.received_data_hora DESC,h.id_mensagem DESC
         )
-        SELECT c.id_cliente, c.id_conversa, c.iniciou_em, c.ids_conversa_periodo,
-               CASE WHEN c.status_dependente IS TRUE OR c.id_etapa_atual >= 4
-                    OR c.contexto_coleta #>> '{{campos,destinatario,status}}' = 'aceito'
-                    THEN c.status_dependente ELSE NULL END AS status_dependente,
-               c.contexto_fireads, q.dados AS dados_consulta,
-               c.id_etapa_atual, c.turno, cl.nome AS nome_cliente, cl.waid_telefone,
-               cl.email, cl.idade AS idade_titular,
-               cl.profissao AS profissao_cliente, c.profissao AS profissao_conversa,
-               d.nome_dependente, d.idade AS idade_dependente,
-               c.followup_stage AS followup_stage_atual,
-               EXISTS (SELECT 1 FROM chatbot.funil_envios f
-                        WHERE f.id_conversa = c.id_conversa AND f.status = 'sent'
-                        {filtro_funil}) AS foi_funil,
-               EXISTS (SELECT 1 FROM chatbot.pesquisa_satisfacao p
-                        WHERE p.id_conversa = c.id_conversa AND p.nota IS NOT NULL
-                        {filtro_avaliacao}) AS avaliada,
-               (SELECT h.received_data_hora FROM chatbot.historico_mensagens h
-                 WHERE h.id_conversa = c.id_conversa {filtro_atividade}
-                   AND (h.quem_enviou = 'cliente' OR (h.quem_enviou = 'bot' AND h.status_envio = 'sent'))
-                 ORDER BY h.received_data_hora DESC, h.id_mensagem DESC LIMIT 1) AS ultima_atividade,
-               (SELECT h.conteudo_texto FROM chatbot.historico_mensagens h
-                 WHERE h.id_conversa = c.id_conversa {filtro_atividade}
-                   AND (h.quem_enviou = 'cliente' OR (h.quem_enviou = 'bot' AND h.status_envio = 'sent'))
-                 ORDER BY h.received_data_hora DESC, h.id_mensagem DESC LIMIT 1) AS ultima_mensagem,
-               (SELECT h.id_mensagem FROM chatbot.historico_mensagens h
-                 WHERE h.id_conversa = c.id_conversa {filtro_atividade}
-                   AND (h.quem_enviou = 'cliente' OR (h.quem_enviou = 'bot' AND h.status_envio = 'sent'))
-                 ORDER BY h.received_data_hora DESC, h.id_mensagem DESC LIMIT 1) AS ultima_mensagem_id
-          FROM conversas_periodo c
-          LEFT JOIN chatbot.consulta_fireads q ON q.id_conversa=c.id_conversa
-          JOIN chatbot.cliente cl ON cl.id_cliente = c.id_cliente
-          LEFT JOIN chatbot.dependente d ON d.id_conversa = c.id_conversa
-         WHERE c.ordem=1
-         ORDER BY ultima_atividade DESC NULLS LAST, c.id_conversa DESC
-    """, tuple(
-        p_contato + p_funil + p_avaliacao
-        + p_atividade + p_atividade + p_atividade
-    ))
+        SELECT a.*, atendimento.nome_titular AS nome_cliente,cl.waid_telefone,cl.username
+        FROM atividade a JOIN chatbot.cliente cl USING(id_cliente)
+        LEFT JOIN chatbot.atendimento_pos_venda atendimento USING(id_conversa)
+        ORDER BY a.ultima_atividade DESC, a.id_conversa DESC
+    """, tuple(parametros))
     return _linhas(cursor)
 
 
@@ -130,10 +89,11 @@ def buscar_mensagens(id_unidade, id_cliente, inicio, fim, cursor):
     cursor.execute(f"""
         SELECT h.id_mensagem, h.id_conversa, h.id_etapa,
                h.received_data_hora AS data, h.quem_enviou,
-               h.tipo_mensagem AS tipo, h.conteudo_texto AS texto
+               h.tipo_mensagem AS tipo, h.conteudo_texto AS texto, h.interativo
           FROM chatbot.historico_mensagens h
           JOIN chatbot.conversa c ON c.id_conversa = h.id_conversa
-         WHERE c.id_unidade = %s AND c.id_cliente = %s {filtro}
+         JOIN chatbot.chat ch ON ch.id_chat=c.id_chat
+         WHERE c.id_central = %s AND ch.id_cliente = %s {filtro}
            AND (h.quem_enviou = 'cliente' OR (h.quem_enviou = 'bot' AND h.status_envio = 'sent'))
          ORDER BY h.received_data_hora, h.id_mensagem
     """, tuple(parametros))

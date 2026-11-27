@@ -12,10 +12,11 @@ def confirmar_cache_cliente_se_pendente(contexto_banco):
     if not contexto_banco.get("cliente_cache_pendente"):
         return False
 
-    salvar_cliente_cache(
-        contexto_banco["cliente_telefone"],
-        contexto_banco["id_cliente"],
-    )
+    if contexto_banco.get("cliente_telefone"):
+        salvar_cliente_cache(contexto_banco["cliente_telefone"],contexto_banco["id_cliente"])
+    if contexto_banco.get("bsuid_origem"):
+        salvar_cliente_cache(contexto_banco["bsuid_origem"],contexto_banco["id_cliente"],
+                             id_central=contexto_banco["id_central"],tipo="bsuid")
     contexto_banco["cliente_cache_pendente"] = False
 
     logger.debug(

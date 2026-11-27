@@ -1,4 +1,5 @@
 import logging
+import re
 
 import requests
 
@@ -13,7 +14,7 @@ from core.logging_config import short_value
 logger = logging.getLogger("whatsapp.waba")
 
 
-def validar_phone_number_id_da_waba(waba_id, phone_number_id):
+def validar_phone_number_id_da_waba(waba_id, phone_number_id, *, waac_id=None):
     """Confirma na Graph API que o phone ID pertence à WABA informada."""
     waba_id = str(waba_id or "").strip()
     phone_number_id = str(phone_number_id or "").strip()
@@ -29,7 +30,7 @@ def validar_phone_number_id_da_waba(waba_id, phone_number_id):
         "Authorization": f"Bearer {get_token_usuario_meta()}",
     }
     params = {
-        "fields": "id",
+        "fields": "id,display_phone_number" if waac_id else "id",
         "limit": 100,
     }
     paginas_consultadas = 0
@@ -80,11 +81,21 @@ def validar_phone_number_id_da_waba(waba_id, phone_number_id):
                 "reason": "invalid_meta_response",
             }
 
-        if any(
-            str(numero.get("id") or "").strip() == phone_number_id
-            for numero in numeros
-            if isinstance(numero, dict)
-        ):
+        for numero in numeros:
+            if not isinstance(numero, dict) or str(numero.get("id")) != phone_number_id:
+                continue
+            if waac_id:
+                # Antes de registrar um recurso diferente, exija da Meta o mesmo
+                # telefone do recurso listado na WABA. Uma resposta sem número é inconclusiva.
+                consulta = requests.get(
+                    construir_url_graph_api(waac_id), headers=headers,
+                    params={"fields": "display_phone_number"}, timeout=get_meta_http_timeout(),
+                )
+                telefone_waba = re.sub(r"\D", "", str(numero.get("display_phone_number") or ""))
+                telefone_waac = _normalizar_resposta(consulta).get("display_phone_number")
+                if (not consulta.ok or not telefone_waba
+                        or telefone_waba != re.sub(r"\D", "", str(telefone_waac or ""))):
+                    return consulta.status_code, {"success": False, "reason": "waac_nao_confirmado"}
             logger.info(
                 "whatsapp_phone_waba_validacao_ok | "
                 "acao=permitir_cadastro waba_id=%s "

@@ -19,7 +19,7 @@ def contexto_cpf(texto="12345678901", *, tipo="text", turnos=0, cidade=None):
     ctx = contexto(etapa=2, texto=texto, tipo=tipo, turnos=turnos)
     ctx["transicoes_permitidas"] = {
         "cpf_valido": 3,
-        "midia_recebida": 11, "humano_solicitado": 11, "limite_sem_avanco": 11,
+        "midia_recebida": 7, "humano_solicitado": 7, "limite_sem_avanco": 7,
     }
     ctx["cadastro"] = {"nome_titular": "João da Silva", "cidade_loja_compra": cidade}
     return ctx
@@ -85,7 +85,7 @@ class Etapa2Tests(unittest.TestCase):
     def test_nome_valido_agora_envia_novo_texto_do_cpf(self):
         envio = flow_sender(contexto(texto="João da Silva"))
         self.assertEqual(envio["id_etapa_resultante"], 2)
-        self.assertEqual(envio["mensagem_bot"], "Certo agora em uma única mensagem me informe seu CPF.")
+        self.assertEqual(envio["mensagem_bot"], "Certo João. Em uma única mensagem, me informe o CPF do titular da compra.")
 
     def test_cpf_extraido_avanca_com_zero_inicial_preservado(self):
         envio = flow_sender(contexto_cpf("Meu CPF: 012.345678-90"))
@@ -123,7 +123,7 @@ class Etapa2Tests(unittest.TestCase):
         for tipo, texto, evento in (("audio", None, "midia_recebida"),
                                     ("text", "Quero um HUMANO, CPF 01234567890", "humano_solicitado")):
             envio = flow_sender(contexto_cpf(texto, tipo=tipo))
-            self.assertEqual(envio["id_etapa_resultante"], 11)
+            self.assertEqual(envio["id_etapa_resultante"], 7)
             self.assertEqual(envio["evento_transicao"], evento)
             self.assertNotIn("cpf_titular", envio)
         self.wa.send_message.assert_not_called()

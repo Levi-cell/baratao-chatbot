@@ -13,7 +13,10 @@ def resolver_intencao_encerramento(contexto_historico, contexto_envio, cursor):
     politica = buscar_politica_etapa(etapa, cursor)
     if not politica.encerra_automaticamente:
         return None
-    motivo = "visita_pendente" if etapa == 8 else MOTIVOS_EVENTO.get(
+    # Pode haver uma resposta terminal confirmada antes da migração e ainda na fila.
+    if contexto_envio.get("resposta_ja_existia") and contexto_envio.get("evento_transicao") == "loja_nao_visitada":
+        return {"motivo_encerramento": "visita_pendente", "bloqueio_dias": 0}
+    motivo = MOTIVOS_EVENTO.get(
         contexto_envio.get("evento_transicao"), "encaminhamento")
     return {"motivo_encerramento": motivo, "bloqueio_dias": politica.bloqueio_dias}
 

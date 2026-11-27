@@ -1,5 +1,8 @@
+from core.integrations.whatsapp.identidade_cliente import eventos_individuais, extrair_identidade
+from core.identidade_atendimento import IdentidadeDivergente
 import json
 import logging
+from datetime import datetime, timezone
 
 from django.conf import settings
 from django.http import JsonResponse
@@ -19,7 +22,7 @@ from core.cache.cache_unidade import (
 from core.database.connection_aws import get_conn
 from core.logging_config import short_value
 from .bloqueio_meta_guard import (
-    responder_se_cliente_marcado_para_bloqueio,
+    verificar_protecao_remetente,
 )
 from .flood_guard import responder_se_flood
 from .meta_signature import validar_assinatura_meta
@@ -63,6 +66,15 @@ def responder_post_webhook(request):
             "reason": "invalid_json",
         })
 
+    resposta = None
+    for evento in eventos_individuais(data):
+        resposta = _processar_evento(request, evento)
+        if resposta.status_code >= 400:
+            return resposta
+    return resposta if resposta is not None else JsonResponse({"status": "ok"})
+
+
+def _processar_evento(request,data):
     phone_number_id = None
     cliente_telefone = None
 
@@ -70,7 +82,7 @@ def responder_post_webhook(request):
         tipo_evento = _classificar_evento_meta(data)
 
         if tipo_evento == TIPO_EVENTO_STATUS:
-            return _responder_status_meta_sem_processar(data)
+            return _registrar_status_identidade(data)
 
         if tipo_evento != TIPO_EVENTO_MENSAGEM:
             logger.info(
@@ -79,17 +91,31 @@ def responder_post_webhook(request):
             return JsonResponse({"status": "ok"})
 
         phone_number_id = _extrair_phone_number_id(data)
-        cliente_telefone = _extrair_cliente_telefone(data)
-        nome_cliente = _extrair_nome_cliente(data)
+        try:
+            valor = _extrair_value(data)
+            identidade = extrair_identidade(valor, valor["messages"][0])
+            cliente_telefone = identidade.wa_id or identidade.user_id
+        except ValueError:
+            logger.info("mensagem_ignorada | motivo=identidade_ausente_ou_invalida")
+            return JsonResponse({"status": "ignored", "reason": "identidade_ausente_ou_invalida"})
+        if _extrair_value(data)["messages"][0].get("type") == "system":
+            resultado = preparar_dados_fila(data)
+            if resultado["status"]=="ready":
+                gravado = _executar_transacao_fila(resultado["dados"])
+                if gravado["status"] == "error":
+                    return JsonResponse({"status":"unavailable"},status=503)
+            return JsonResponse({"status":"ok"})
 
-        if resposta_bloqueio := responder_se_cliente_marcado_para_bloqueio(
+        resposta_bloqueio, chave_flood = verificar_protecao_remetente(
             cliente_telefone,
             phone_number_id,
-            nome_cliente=nome_cliente,
-        ):
+            identificadores=[v for v in (identidade.wa_id, identidade.user_id) if v],
+            conta_origem=data["entry"][0].get("id"),
+        )
+        if resposta_bloqueio is not None:
             return resposta_bloqueio
 
-        if resposta_flood := responder_se_flood(data):
+        if resposta_flood := responder_se_flood(data, chave_flood=chave_flood):
             return resposta_flood
 
         if not unidade_esta_ativa(phone_number_id):
@@ -117,6 +143,7 @@ def responder_post_webhook(request):
         preparacao_fila = preparar_dados_fila(data)
 
         if preparacao_fila["status"] == "ready":
+            preparacao_fila["dados"]["assinatura_verificada"] = settings.META_WEBHOOK_SIGNATURE_REQUIRED
             resultado_fila = _executar_transacao_fila(preparacao_fila["dados"])
 
         else:
@@ -247,22 +274,37 @@ def _classificar_evento_meta(data):
     return TIPO_EVENTO_DESCONHECIDO
 
 
-def _responder_status_meta_sem_processar(data):
-    statuses = _extrair_value(data).get("statuses") or []
-    nomes_status = sorted({
-        status.get("status")
-        for status in statuses
-        if status.get("status")
-    })
-    primeiro_status = statuses[0] if statuses else {}
-
-    logger.info(
-        "status_meta_recebido | acao=ignorar_na_v1 total=%s statuses=%s id_hash_msg_bot=%s",
-        len(statuses),
-        ",".join(nomes_status) or None,
-        short_value(primeiro_status.get("id")),
+def _registrar_status_identidade(data):
+    from core.repositories.atendimento.identidade_cliente import (
+        atualizar_username_por_recibo, buscar_central, falha_da_rota_atual,
     )
-    return JsonResponse({"status": "ok"})
+    from core.repositories.atendimento.fallback_contato import reservar_reconfirmacao
+    valor = _extrair_value(data)
+    status = valor["statuses"][0]
+    tipo = status.get("status")
+    if tipo not in {"delivered", "read", "failed"} or not status.get("id"):
+        return JsonResponse({"status":"ok"})
+    if tipo != "failed":
+        try:
+            identidade = extrair_identidade(valor, {"from": status.get("recipient_id"),
+                                                    "from_user_id": status.get("recipient_user_id")})
+            observado_em = datetime.fromtimestamp(int(status["timestamp"]), timezone.utc)
+        except (KeyError, ValueError, TypeError, OverflowError, OSError):
+            return JsonResponse({"status": "ignored"})
+        if not identidade.username:
+            return JsonResponse({"status": "ok"})
+    # Um failed genérico não autoriza troca de destinatário. Só há reserva se a
+    # rota antiga já foi suspensa por evento de identidade assinado e correlacionado.
+    with get_conn(application_name="webhook_status") as conn, conn.cursor() as cursor:
+        central = buscar_central(_extrair_phone_number_id(data),data["entry"][0].get("id"),cursor)
+        if central and tipo != "failed":
+            atualizar_username_por_recibo(central[0], status["id"], identidade.user_id,
+                                         identidade.wa_id, identidade.username, observado_em, cursor)
+            return JsonResponse({"status": "ok"})
+        tentativa = falha_da_rota_atual(central[0],status["id"],cursor) if central else None
+        if tentativa and tentativa[3]:
+            reservar_reconfirmacao(tentativa[0],tentativa[1],status["id"],cursor)
+    return JsonResponse({"status":"ok"})
 
 
 def _executar_transacao_fila(dados):
@@ -285,6 +327,10 @@ def _executar_transacao_fila(dados):
 
         return resultado
 
+    except IdentidadeDivergente:
+        conn_webhook.rollback()
+        fila_logger.warning("mensagem_ignorada | motivo=identidade_divergente")
+        return {"status": "ignored", "reason": "identidade_divergente"}
     except Exception:
         if conn_webhook:
             conn_webhook.rollback()
@@ -365,9 +411,6 @@ def _extrair_phone_number_id(data):
     return metadata.get("phone_number_id")
 
 
-def _extrair_cliente_telefone(data):
-    contacts = _extrair_value(data).get("contacts", [{}])
-    return contacts[0].get("wa_id") if contacts else None
 
 
 
@@ -393,19 +436,3 @@ def _extrair_id_hash_msg_seguro(data):
 
     except Exception:
         return None
-
-
-def _extrair_nome_cliente(data):
-    contacts = _extrair_value(data).get("contacts") or []
-
-    if not contacts or not isinstance(contacts[0], dict):
-        return None
-
-    profile = contacts[0].get("profile") or {}
-    nome_cliente = profile.get("name")
-
-    if nome_cliente is None:
-        return None
-
-    nome_cliente = str(nome_cliente).strip()
-    return nome_cliente[:200] or None

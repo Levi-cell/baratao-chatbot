@@ -32,7 +32,7 @@ def buscar_bloqueio_conversa_por_id(id_conversa, cursor):
         SELECT c.finalizou_em, e.bloqueio_dias
         FROM chatbot.conversa c JOIN chatbot.etapa e ON e.id_etapa = c.id_etapa_atual
         WHERE c.id_conversa = %s AND NOT c.status_ativa
-          AND c.finalizou_em IS NOT NULL AND e.bloqueio_dias > 0;
+          AND c.finalizou_em IS NOT NULL AND e.bloqueio_dias > 0 AND c.motivo_encerramento IS DISTINCT FROM 'visita_pendente';
     """, (id_conversa,))
     return _montar_bloqueio(cursor.fetchone())
 
@@ -46,11 +46,14 @@ def buscar_bloqueio_ativo_por_cliente_unidade(cliente_telefone, id_phone_unidade
         JOIN chatbot.cliente cl ON cl.id_cliente = ch.id_cliente
         JOIN chatbot.central_pos_venda b ON b.id_central = c.id_central
         JOIN chatbot.etapa e ON e.id_etapa = c.id_etapa_atual
-        WHERE cl.waid_telefone = %s AND b.phone_number_id = %s
-          AND NOT c.status_ativa AND e.bloqueio_dias > 0
+        WHERE (cl.waid_telefone = %s OR EXISTS (
+              SELECT FROM chatbot.identidade_bsuid a WHERE a.id_central=b.id_central
+                AND a.id_cliente=cl.id_cliente AND a.user_id=%s
+          )) AND b.phone_number_id = %s
+          AND NOT c.status_ativa AND e.bloqueio_dias > 0 AND c.motivo_encerramento IS DISTINCT FROM 'visita_pendente'
           AND c.finalizou_em > CURRENT_TIMESTAMP - e.bloqueio_dias * INTERVAL '1 day'
         ORDER BY c.finalizou_em DESC LIMIT 1;
-    """, (cliente_telefone, id_phone_unidade))
+    """, (cliente_telefone, cliente_telefone, id_phone_unidade))
     return _montar_bloqueio(cursor.fetchone())
 
 

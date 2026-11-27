@@ -23,6 +23,7 @@ def valida_historico(mensagem, contexto_banco, cursor):
         "transicoes_permitidas": listar_transicoes_permitidas(etapa, cursor),
         "resposta_bot_para_mensagem_atual": resposta,
         **contexto_pos_venda,
+        "telefone_compartilhado_apto": (mensagem.get("estrutura_compartilhamento") or {}).get("_telefone_verificado"),
         "mensagem_cliente_atual": {
             **mensagem, "id_mensagem": id_hist, "id_mensagem_fila": mensagem["id_mensagem"],
             "id_hash_msg": mensagem["id_hash"], "id_etapa": etapa, "received_data_hora": recebido,

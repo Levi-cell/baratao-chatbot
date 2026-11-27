@@ -17,7 +17,7 @@ O projeto utiliza um fluxo determinístico, com etapas e transições controlada
 
 ## Fluxo de atendimento
 
-O catálogo vigente possui **9 etapas e 29 transições**. Os identificadores são definidos em `core/etapas_pos_venda.py` e as transições autorizadas pelo catálogo SQL do PostgreSQL.
+O catálogo vigente possui **7 etapas e 27 transições**. Os identificadores são definidos em `core/etapas_pos_venda.py` e as transições autorizadas pelo catálogo SQL do PostgreSQL.
 
 | Etapa | Responsabilidade | Estado atual |
 | --- | --- | --- |
@@ -25,19 +25,16 @@ O catálogo vigente possui **9 etapas e 29 transições**. Os identificadores s�
 | 2 | Coleta e validação do formato do CPF | Implementada |
 | 3 | Identificação do produto: Estofados, Móveis ou Ambos | Implementada |
 | 4 | Identificação do assunto do atendimento | Implementada |
-| 6 | Coleta dos números dos pedidos ou registro de nota perdida | Implementada |
-| 7 | Confirmação da visita à loja em casos de assistência | Pergunta implementada; processamento da resposta pendente |
-| 8 | Orientação e encerramento quando a visita à loja está pendente | Prevista no catálogo |
-| 9 | Coleta dos detalhes da situação | Pergunta implementada; processamento da resposta pendente |
-| 11 | Encaminhamento e encerramento do atendimento | Implementada no tratamento universal; encerramento normal após detalhes pendente |
+| 5 | Coleta dos números dos pedidos ou registro de nota perdida | Implementada |
+| 6 | Relato da situação em uma mensagem de texto | Implementada |
+| 7 | Encaminhamento humano, aviso de assistência quando aplicável e bloqueio interno de 90 dias | Implementada |
 
-Os IDs 5 e 10 não são utilizados. A cidade não faz parte da coleta atual.
+Os IDs vão de 1 a 7. A cidade não faz parte da coleta atual.
 
 ### Abertura e retorno
 
-- Quando falta o nome do titular, o atendimento começa na etapa 1.
-- Quando o nome já está cadastrado, mas falta o CPF, começa na etapa 2.
-- Quando nome e CPF já estão cadastrados, uma nova conversa começa na etapa 3, respeitando eventual bloqueio vigente.
+- Toda nova conversa começa pelo nome do titular, inclusive em um retorno após os 90 dias.
+- Após o nome, a entrada somente com BSUID exige compartilhamento oficial. Em seguida, o Theo pede o CPF desta compra.
 - Se houver uma conversa ativa, o atendimento retoma a etapa persistida.
 
 Nome e CPF são armazenados no cadastro global do cliente e na cópia do atendimento. Produto, assunto e pedidos pertencem à conversa, evitando reutilizar indevidamente informações de uma compra anterior. A validação do CPF verifica seu formato, sem comprovação de identidade ou consulta à Receita Federal.
@@ -52,17 +49,17 @@ O cliente seleciona Estofados, Móveis ou Ambos. Na sequência, pode escolher um
 - **Misto:** dois ou mais assuntos.
 - **Outros:** solicitações não contempladas nas opções anteriores.
 
-A etapa 6 aceita múltiplos números de pedidos na mesma mensagem, identifica a filial pelos dois dígitos finais de cada pedido e permite informar a perda da nota por texto ou botão. O catálogo inicial possui 26 filiais cadastradas.
+A etapa 5 aceita múltiplos números de pedidos na mesma mensagem, identifica a filial pelos dois dígitos finais de cada pedido e permite informar a perda da nota por texto ou botão. O catálogo inicial possui 26 filiais cadastradas.
 
-Após a coleta dos pedidos, casos de assistência seguem para a pergunta de visita à loja (etapa 7); os demais assuntos seguem para a pergunta de detalhes (etapa 9). O processamento completo dessas respostas é uma entrega pendente.
+Com as notas confirmadas ou perdidas, todos seguem para o relato (6) e o encaminhamento (7). Para Assistência e Misto, o Theo orienta sobre fotos, vídeos, loja da compra e prazo de reclamação.
 
 ### Encaminhamento humano e tratamento universal
 
-As etapas 1, 2, 3, 4 e 6 compartilham o tratamento de mídias não suportadas, solicitações de atendimento humano e entradas repetidas sem avanço. Após três repetições consecutivas, uma quarta entrada aciona o encaminhamento.
+As etapas 1 a 6 compartilham o tratamento de mídias não suportadas, solicitações de atendimento humano e entradas repetidas sem avanço. Após três repetições consecutivas, uma quarta entrada aciona o encaminhamento.
 
-O encaminhamento apresenta os contatos de pós-venda conforme o produto escolhido. Quando ainda não existe produto definido, apresenta os dois setores. Os dados disponíveis da conversa podem compor o resumo encaminhado no link do WhatsApp.
+O encaminhamento apresenta os contatos de pós-venda conforme o produto escolhido. Com ambos ou sem produto definido, uma única mensagem apresenta os dois cartões com foto e botão. Os dados disponíveis da conversa podem compor o resumo encaminhado no link do WhatsApp.
 
-Após a confirmação do encaminhamento, o fluxo registra o encerramento e aplica um bloqueio interno de 90 dias por cliente e central. Esse bloqueio não equivale a um bloqueio na plataforma WhatsApp. A etapa 8, prevista para visita pendente, possui regra distinta de retorno imediato.
+Após a confirmação do encaminhamento, o fluxo registra o encerramento e aplica um bloqueio interno de 90 dias por cliente e central. Esse bloqueio não equivale a um bloqueio na plataforma WhatsApp.
 
 O atendimento humano ocorre nos números de destino; a apresentação dos contatos não significa que o cliente já enviou uma mensagem à equipe.
 
@@ -154,11 +151,11 @@ Consulte o [guia de consumo Meta](deploy/consumo_mensal_meta.md) para configura�
 
 Requisitos: Python 3.12, PostgreSQL e Redis, além das configurações de desenvolvimento da integração WhatsApp para testes externos autorizados.
 
-Na raiz do projeto, em PowerShell:
+Na VM Ubuntu, na raiz do projeto:
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
@@ -166,13 +163,13 @@ Configure as variáveis de ambiente necessárias conforme [core/config_env.py](c
 
 Com o banco e o ambiente configurados, verifique o Django:
 
-```powershell
+```bash
 python callback/manage.py check
 ```
 
 Para iniciar o servidor local, quando o ambiente estiver preparado:
 
-```powershell
+```bash
 python callback/manage.py runserver
 ```
 
@@ -180,22 +177,7 @@ O setup de uma base nova e a atualização de uma base existente seguem procedim
 
 ## Testes automatizados
 
-Para executar testes unitários das etapas de pós-venda e da arquitetura, a partir da raiz:
-
-```powershell
-python -m unittest tests.test_etapa1_pos_venda tests.test_etapa2_pos_venda tests.test_etapa3_pos_venda tests.test_etapa4_pos_venda tests.test_etapa6_pedidos -v
-python -m unittest tests.test_arquitetura_pos_venda tests.test_abertura_digitacao_pos_venda tests.test_consumo_meta_varejo -v
-```
-
-As suítes de integração com PostgreSQL exigem bancos locais descartáveis com nome iniciado por `baratao_`. As conexões são configuradas pelas variáveis `BARATAO_TEST_DSN` e `BARATAO_CONSUMO_TEST_DSN`, respectivamente. Os testes recriam o schema `chatbot` nas bases de ensaio; nunca utilize uma base de produção.
-
-```powershell
-python -m unittest tests.test_etapa1_pos_venda_postgres tests.test_consumo_meta_varejo_postgres -v
-```
-
-A documentação registra 132 testes aprovados na revisão de 22/11/2026, antes das entregas posteriores de assunto e pedidos. Esse resultado é histórico e não constitui uma nova execução ou certificação da versão de 25/11/2026.
-
-Mais informações em [tests/README.md](tests/README.md).
+Na VM Ubuntu, execute `sudo -u chatbot bash deploy/testar_ubuntu.sh` na raiz da versão em teste. O script cria dois bancos PostgreSQL temporários e executa a suíte com o envio à Meta simulado. Consulte [o ambiente de desenvolvimento](../AMBIENTE_DESENVOLVIMENTO.md).
 
 ## Implantação
 
@@ -214,8 +196,6 @@ Manter configurações sensíveis fora do Git, utilizar acessos restritos por ce
 ## Próximas entregas
 
 - Concluir a adaptação integral do webhook e das proteções de entrada ao modelo de varejo.
-- Implementar o processamento da resposta à visita à loja (etapa 7) e o encerramento por visita pendente (etapa 8).
-- Implementar a coleta e persistência dos detalhes (etapa 9) e o encaminhamento normal de conclusão (etapa 11).
 - Adaptar as abas de conversas e relatórios do painel ao pós-venda.
 - Revisar e remover dependências e documentações legadas que não pertencem ao novo atendimento.
 - Validar o fluxo completo, as migrações e a implantação antes de liberar a operação em produção.

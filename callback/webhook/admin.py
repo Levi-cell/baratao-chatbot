@@ -1,7 +1,7 @@
 import logging
 
 from django.contrib import admin, messages
-from django.db import DatabaseError, connection
+from django.db import DatabaseError, connection, connections, transaction
 from django.http import HttpResponseRedirect
 from django.urls import NoReverseMatch, reverse
 from django.utils.html import format_html
@@ -26,9 +26,11 @@ from core.repositories.unidades.cache_control import (
     incrementar_versao_cache_unidades,
 )
 
+from .forms import CentralPosVendaForm
 from .models import (
     AtendimentoCustomizado,
     CacheControle,
+    CentralPosVenda,
     Chat,
     Cliente,
     ClienteBloqueadoMeta,
@@ -64,6 +66,51 @@ class SomenteVisualizacaoAdminMixin:
 
     def get_readonly_fields(self, request, obj=None):
         return [field.name for field in self.model._meta.fields]
+
+
+@admin.register(CentralPosVenda)
+class CentralPosVendaAdmin(admin.ModelAdmin):
+    form = CentralPosVendaForm
+    list_display = ("nome", "ativa", "telefone", "phone_number_id", "waba_id", "waac_id")
+    search_fields = ("nome", "telefone", "phone_number_id", "waba_id", "waac_id")
+    list_filter = ("ativa",)
+    ordering = ("nome", "id_central")
+    readonly_fields = ("id_fuso", "nome_fuso", "fuso_verificado_em")
+
+    def save_model(self, request, obj, form, change):
+        if change:
+            # Preserva o fuso sincronizado em paralelo. O trigger central_mudou
+            # versiona o cache na própria transação, uma vez por UPDATE.
+            obj.save(update_fields=form.changed_data)
+        else:
+            super().save_model(request, obj, form, change)
+        self._sincronizar_apos_commit(request, obj._state.db)
+
+    def delete_model(self, request, obj):
+        using = obj._state.db
+        super().delete_model(request, obj)
+        self._sincronizar_apos_commit(request, using)
+
+    def delete_queryset(self, request, queryset):
+        using = queryset.db
+        super().delete_queryset(request, queryset)
+        self._sincronizar_apos_commit(request, using)
+
+    def _sincronizar_apos_commit(self, request, using):
+        # O trigger já versionou o catálogo. Recarregar apenas dados confirmados,
+        # inclusive quando o Admin está dentro de uma transação externa.
+        def publicar():
+            try:
+                with connections[using].cursor() as cursor:
+                    recarregar_cache_unidades_ou_erro(cursor)
+            except (CacheUnidadesIndisponivel, DatabaseError):
+                logger.exception("central_confirmada_cache_pendente")
+                self.message_user(
+                    request, "Alteração salva no banco. A sincronização do cache está pendente.",
+                    level=messages.WARNING,
+                )
+
+        transaction.on_commit(publicar, using=using)
 
 
 @admin.register(EnderecoUnidade)

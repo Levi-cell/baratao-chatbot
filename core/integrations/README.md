@@ -1,13 +1,10 @@
 # Integrações externas
 
-Adaptadores compartilhados para serviços externos. A V1 integra WhatsApp Cloud
-API por PyWa, consumo Meta, consulta e entrega FireAds e criação de oportunidades no Funil de Vendas por ApiCarrossel.
+Adaptadores compartilhados para serviços externos. O worker de fluxo usa o WhatsApp Cloud API via PyWa para enviar mensagens. O worker de consumo consulta a Meta para atualizar o painel.
 
 - [Portal do projeto](../../README.md)
 - [Padrões de arquitetura](../../PADROES_DE_ARQUITETURA.md#integrações-externas)
 - [Integração WhatsApp](whatsapp/README.md)
-- [Integração FireAds](../../docs/fireads.md)
-- [Integração Funil de Vendas](funil/README.md)
 
 ## Contrato
 
@@ -36,9 +33,3 @@ crie wrappers que apenas reexportem outra função sem responsabilidade própria
 
 Testes de integração nesta fase devem simular o serviço externo e permanecer em
 `tests/`.
-
-O follow-up reutiliza o adaptador WhatsApp, com catálogo e sender próprios.
-Não cria uma integração nova: o worker decide quando enviar, e o sender recebe
-somente destinatário e phone ID, devolvendo o texto e o ID confirmado pela Meta.
-Testes de SQL real ficam em `tests/integration/`, com PostgreSQL local descartável
-e Meta simulada, conforme o [guia de testes](../../tests/README.md).

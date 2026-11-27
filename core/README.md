@@ -14,8 +14,7 @@ operacionais. `core` não conhece o fluxo completo de nenhum ponto de entrada.
 | `database/` | Conexão, DDL, funções PostgreSQL e setup | [database/README.md](database/README.md) |
 | `repositories/` | SQL de runtime usando cursor recebido | [repositories/README.md](repositories/README.md) |
 | `integrations/` | Comunicação com serviços externos | [integrations/README.md](integrations/README.md) |
-| `triagem/` | Catálogo único das seis perguntas, compartilhado pelo WhatsApp e Funil | [triagem/perguntas.py](triagem/perguntas.py) |
-| `validacoes/` | Validações puras de abertura, endereço, e-mail, idade e outros dados do atendimento | [email.py](validacoes/email.py), [suporte_por_idade.py](validacoes/suporte_por_idade.py) |
+| `validacoes/` | Regras puras dos dados do pós-venda | [Nome do titular](validacoes/nome_titular.py), [CPF](validacoes/cpf_titular.py), [pedidos](validacoes/pedidos_pos_venda.py) |
 | `config_env.py` | Leitura de `.env`, variáveis de ambiente e validação de tipos | [Padrões de arquitetura](../PADROES_DE_ARQUITETURA.md#configuração-e-segredos) |
 | `logging_config.py` | Configuração comum de logs e redução de identificadores | [Padrões de arquitetura](../PADROES_DE_ARQUITETURA.md#logging-e-exceções) |
 

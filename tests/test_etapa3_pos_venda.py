@@ -14,8 +14,8 @@ from tests.test_etapa1_pos_venda import contexto, ENV, PATCH_TEXTO, PATCH_CARTOE
 def contexto_produto(texto="Móveis", **kwargs):
     ctx = contexto(etapa=3, texto=texto, **kwargs)
     ctx["transicoes_permitidas"] = {
-        "produto_escolhido": 4, "midia_recebida": 11,
-        "humano_solicitado": 11, "limite_sem_avanco": 11,
+        "produto_escolhido": 4, "midia_recebida": 7,
+        "humano_solicitado": 7, "limite_sem_avanco": 7,
     }
     return ctx
 
@@ -131,7 +131,7 @@ class Etapa3Tests(unittest.TestCase):
             ("Estofados", "text", 3, "limite_sem_avanco"),
         ):
             envio = flow_sender(contexto_produto(texto, tipo=tipo, turnos=turnos))
-            self.assertEqual(envio["id_etapa_resultante"], 11)
+            self.assertEqual(envio["id_etapa_resultante"], 7)
             self.assertEqual(envio["evento_transicao"], evento)
             self.assertNotIn("produto", envio)
             self.assertIn("encaminhado_sofas", envio)

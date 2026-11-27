@@ -15,7 +15,7 @@ from tests.test_etapa1_pos_venda import ENV, PATCH_CARTOES, PATCH_TEXTO, context
 def contexto_assunto(texto, *, produto="moveis", **kwargs):
     ctx = contexto(etapa=4, texto=texto, **kwargs)
     ctx["produto"] = produto
-    ctx["transicoes_permitidas"]["assunto_escolhido"] = 6
+    ctx["transicoes_permitidas"]["assunto_escolhido"] = 5
     return ctx
 
 
@@ -57,7 +57,7 @@ class AssuntoTests(unittest.TestCase):
                 envio = flow_sender(ctx)
                 assunto = linha["id"].split(":")[1]
                 self.assertEqual((envio["id_etapa_resultante"], envio["evento_transicao"], envio["assunto"]),
-                                 (6, "assunto_escolhido", assunto))
+                                 (5, "assunto_escolhido", assunto))
                 self.assertEqual(envio["interativo"]["action"]["buttons"][0]["reply"]["title"], "Perdi a nota")
                 cursor = MagicMock(rowcount=1)
                 self.assertEqual(atualizar_banco_conforme_transicao_de_etapa(ctx, envio, cursor), {"assunto": assunto})
@@ -85,22 +85,24 @@ class AssuntoTests(unittest.TestCase):
         ):
             ctx = contexto_assunto(entrada, tipo=tipo, turnos=turnos, produto=produto)
             envio = flow_sender(ctx)
-            self.assertEqual((envio["id_etapa_resultante"], envio["evento_transicao"]), (11, evento))
+            self.assertEqual((envio["id_etapa_resultante"], envio["evento_transicao"]), (7, evento))
             self.assertNotIn("assunto", envio)
             self.assertEqual({k for k in envio if k.startswith("encaminhado_")},
                              {f"encaminhado_{s}" for s in setores})
             if len(setores) == 1:
                 self.assertEqual(envio["interativo"]["type"], "cta_url")
+                self.assertNotIn("header", self.wa.send_message.call_args.kwargs)
+                self.assertNotIn("header", envio["interativo"])
                 telefone = ctx["central"]["telefone_" + next(iter(setores))]
                 self.assertIn(f"wa.me/{telefone}?", envio["interativo"]["action"]["parameters"]["url"])
 
     def test_mapa_e_confirmacao_da_meta_antes_de_qualquer_efeito(self):
         ctx = contexto_assunto("Montagem")
-        ctx["transicoes_permitidas"]["assunto_escolhido"] = 7
+        ctx["transicoes_permitidas"]["assunto_escolhido"] = 6
         with self.assertRaises(ValueError):
             flow_sender(ctx)
         self.wa.send_message.assert_not_called()
-        ctx["transicoes_permitidas"]["assunto_escolhido"] = 6
+        ctx["transicoes_permitidas"]["assunto_escolhido"] = 5
         self.wa.send_message.return_value = {}
         with self.assertRaises(ErroEnvioMeta):
             flow_sender(ctx)

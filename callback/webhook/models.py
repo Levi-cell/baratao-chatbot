@@ -2,9 +2,14 @@ from core.integrations.whatsapp.numero_comercial import numero_comercial_whatsap
 from core.validacoes.turno import ROTULOS_TURNO
 from core.validacoes.suporte_por_idade import IDADES_MINIMAS_SUPORTE
 
+from django.apps import apps as django_apps
 from django.conf import settings
+from django.contrib.auth import get_permission_codename
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.core.validators import RegexValidator
+from django.db import models, router
+from django.db.models.signals import post_migrate
+from django.dispatch import receiver
 from core.validacoes.encerramento_por_idade import ROTULOS_MOTIVOS
 
 
@@ -366,6 +371,78 @@ class Unidade(models.Model):
     class Meta:
         managed = False
         db_table = 'unidade'
+
+
+class CentralPosVenda(models.Model):
+    validar_telefone_setor = RegexValidator(
+        r"\A[1-9][0-9]{7,14}\Z", "Informe de 8 a 15 dígitos, com DDI e sem zero inicial.",
+    )
+
+    id_central = models.AutoField(primary_key=True)
+    nome = models.CharField("nome da central")
+    nome_agente = models.CharField("nome do agente")
+    genero_agente = models.CharField("gênero do agente", choices=Unidade.Genero.choices)
+    ativa = models.BooleanField(default=True, help_text="Habilita o atendimento desta central.")
+    waba_id = models.CharField("WABA ID", help_text="ID da conta empresarial (messaging_account_id).")
+    phone_number_id = models.CharField("Phone Number ID", unique=True)
+    waac_id = models.CharField(
+        "WAAC ID", unique=True, blank=True, null=True,
+        validators=[RegexValidator(r"\A[1-9][0-9]*\Z", "Informe um ID numérico positivo, sem zero inicial.")],
+        help_text="Informe o ID de conta verificado para este número. Em branco, o envio usa o Phone Number ID.",
+    )
+    telefone = models.CharField("telefone da central", unique=True)
+    telefone_moveis = models.CharField(
+        "telefone de móveis", blank=True, null=True, validators=[validar_telefone_setor],
+    )
+    telefone_sofas = models.CharField(
+        "telefone de sofás", blank=True, null=True, validators=[validar_telefone_setor],
+    )
+    id_fuso = models.IntegerField("ID do fuso", blank=True, null=True, editable=False)
+    nome_fuso = models.TextField("nome do fuso", blank=True, null=True, editable=False)
+    fuso_verificado_em = models.DateTimeField("fuso verificado em", blank=True, null=True, editable=False)
+
+    def clean(self):
+        super().clean()
+        erros = {}
+        if self.waac_id and self.waac_id == self.phone_number_id:
+            erros["waac_id"] = "O WAAC ID deve ser diferente do Phone Number ID."
+        if self.ativa:
+            for campo in ("telefone_moveis", "telefone_sofas"):
+                if not getattr(self, campo):
+                    erros[campo] = "Informe o telefone do setor para ativar a central."
+        if self.telefone_moveis and self.telefone_moveis == self.telefone_sofas:
+            erros["telefone_sofas"] = "Informe números diferentes para móveis e sofás."
+        if erros:
+            raise ValidationError(erros)
+
+    def __str__(self):
+        return self.nome
+
+    class Meta:
+        managed = False
+        db_table = "central_pos_venda"
+        verbose_name = "central de pós-venda"
+        verbose_name_plural = "centrais de pós-venda"
+
+
+@receiver(post_migrate, sender=CentralPosVenda._meta.app_config)
+def criar_permissoes_central(sender, using, apps=django_apps, **kwargs):
+    # O webhook tem um pacote de migrations vazio. Seu modelo não aparece
+    # no estado histórico usado pelo post_migrate padrão do Django.
+    try:
+        permissao = apps.get_model("auth", "Permission")
+        tipo = apps.get_model("contenttypes", "ContentType")
+    except LookupError:
+        return
+    if not router.allow_migrate_model(using, permissao):
+        return
+    content_type = tipo.objects.db_manager(using).get_for_model(CentralPosVenda)
+    opts = CentralPosVenda._meta
+    for acao in opts.default_permissions:
+        permissao.objects.using(using).get_or_create(
+            content_type=content_type, codename=get_permission_codename(acao, opts),
+            defaults={"name": f"Can {acao} {opts.verbose_name_raw}"},
+        )
 
 
 class EnderecoUnidade(models.Model):

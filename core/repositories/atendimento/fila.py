@@ -27,7 +27,8 @@ def existe_mensagem_anterior_aberta_atendimento(
             SELECT 1
             FROM chatbot.fila_mensagens f
             JOIN chatbot.central_pos_venda b USING (id_central)
-            WHERE cliente_telefone = %s
+            WHERE (f.id_cliente = (SELECT id_cliente FROM chatbot.fila_mensagens WHERE id_mensagem=%s)
+                    OR (f.id_cliente IS NULL AND f.cliente_telefone=%s))
               AND b.phone_number_id = %s
               AND id_mensagem <> %s
               AND status IN ('pending', 'processing')
@@ -41,6 +42,7 @@ def existe_mensagem_anterior_aberta_atendimento(
             LIMIT 1
         );
     """, (
+        id_mensagem_atual,
         cliente_telefone,
         id_phone_unidade,
         id_mensagem_atual,
@@ -209,3 +211,11 @@ def deletar_mensagem_se_max_retry(id_mensagem, max_retry, cursor):
         cursor.rowcount,
     )
     return cursor.rowcount
+
+
+def ler_identidade_fila(id_fila, cursor):
+    cursor.execute("""
+        SELECT id_cliente, user_id_origem, interativo, id_central
+        FROM chatbot.fila_mensagens WHERE id_mensagem=%s
+    """, (id_fila,))
+    return cursor.fetchone()

@@ -62,12 +62,12 @@ def registrar_cache_bloqueio_apos_commit(
     if bloqueio_dias <= 0:
         return False
 
-    registrado = registrar_bloqueio_conversa_cache(
-        mensagem["cliente_telefone"],
-        mensagem["id_phone_unidade"],
-        resultado_encerramento["finalizou_em"],
-        bloqueio_dias,
-    )
+    registrado = False
+    for chave in dict.fromkeys((mensagem.get("cliente_telefone"),mensagem.get("user_id_origem"))):
+        if chave:
+            gravado = registrar_bloqueio_conversa_cache(chave,mensagem["id_phone_unidade"],
+                                                         resultado_encerramento["finalizou_em"],bloqueio_dias)
+            registrado = registrado or gravado
 
     logger.info(
         "cache_bloqueio_pos_commit | acao=registrar cliente=%s "
