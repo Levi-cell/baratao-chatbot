@@ -38,6 +38,7 @@ def atualizar_cpf_do_atendimento(id_conversa, cpf_titular, cursor):
 
 
 def registrar_contatos_encaminhados(id_conversa, telefone_baratao, telefone_atacadao, cursor):
+    """A gravação dos destinos aciona a situação de encaminhamento na mesma transação."""
     cursor.execute("""
         UPDATE chatbot.atendimento_pos_venda
         SET encaminhado_baratao = %s, encaminhado_atacadao = %s

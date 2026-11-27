@@ -2,6 +2,10 @@
 
 O banco continua sendo `db_chatbot` e os objetos da aplicação continuam no schema `chatbot`. A estrutura de negócio pertence ao SQL versionado. O Django administra suas tabelas de usuários, permissões e sessões. A configuração da conexão permanece em `connection_aws.py`.
 
+## Situação e observação do atendimento (Beta V0.7.0)
+
+A ficha em `atendimento_pos_venda` é identificada por `id_conversa`. A coluna `situacao` começa em “Não encaminhado” e o gatilho `atendimento_sincroniza_situacao` passa para “Já encaminhado” ao gravar os destinos do envio. Depois do encaminhamento, o operador poderá registrar “Aguardando cliente” ou “Resolvido”. A coluna `observacao` é texto opcional. Os dois campos são compartilhados por todas as linhas da conversa no futuro Controle. [Fases e responsáveis](../../CONTROLE_POS_VENDA.md#situação-do-atendimento)
+
 ## Produtos por nota (Beta V0.6.0)
 
 Cada linha de `pedido_conversa` tem um ID de nota estável e mantém a unicidade de conversa e número. A tabela `nota_produtos` registra um código do catálogo e uma quantidade inteira positiva por nota. Um índice pelo código permite localizar as notas de determinado produto. A etapa de pedidos continua registrando apenas o número e a filial. [Desenho do Controle](../../CONTROLE_POS_VENDA.md)

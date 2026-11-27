@@ -522,8 +522,8 @@ class WorkerPostgresTests(unittest.TestCase):
         self.ciclo()
         self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_humano"))
         self.assertEqual(self.adm.execute("""
-            SELECT produto, encaminhado_atacadao, encaminhado_baratao FROM chatbot.atendimento_pos_venda
-        """).fetchone(), (None, "557592087803", "557582467000"))
+            SELECT produto, encaminhado_atacadao, encaminhado_baratao, situacao FROM chatbot.atendimento_pos_venda
+        """).fetchone(), (None, "557592087803", "557582467000", "Já encaminhado"))
         cur = self.adm.cursor()
         self.assertEqual(buscar_bloqueio_ativo_por_cliente_unidade("5511999990000", "999", cur).bloqueio_dias, 90)
         self.assertIsNone(buscar_bloqueio_ativo_por_cliente_unidade("5511999990000", "888", cur))
@@ -1206,8 +1206,8 @@ class WorkerPostgresTests(unittest.TestCase):
             self.ciclo()
         self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento"))
         self.assertEqual(self.adm.execute(
-            "SELECT detalhes,encaminhado_atacadao,encaminhado_baratao FROM chatbot.atendimento_pos_venda"
-        ).fetchone(), (relato, "557592087803", "557582467000"))
+            "SELECT detalhes,encaminhado_atacadao,encaminhado_baratao,situacao FROM chatbot.atendimento_pos_venda"
+        ).fetchone(), (relato, "557592087803", "557582467000", "Já encaminhado"))
         partes = self.adm.execute("""
             SELECT parte_resposta,conteudo_texto,interativo FROM chatbot.historico_mensagens
             WHERE id_mensagem_fila=%s AND quem_enviou='bot' ORDER BY parte_resposta
@@ -1243,11 +1243,30 @@ class WorkerPostgresTests(unittest.TestCase):
         self.ciclo()
         self.assertEqual(self.conversa()[:3], (6, 0, True))
         self.assertEqual(self.adm.execute("""
-            SELECT detalhes, encaminhado_atacadao, encaminhado_baratao FROM chatbot.atendimento_pos_venda
-        """).fetchone(), (None, None, None))
+            SELECT detalhes, encaminhado_atacadao, encaminhado_baratao, situacao FROM chatbot.atendimento_pos_venda
+        """).fetchone(), (None, None, None, "Não encaminhado"))
         self.assertEqual(self.adm.execute("""
             SELECT count(*) FROM chatbot.historico_mensagens WHERE id_mensagem_fila=%s AND quem_enviou='bot'
         """, (item,)).fetchone(), (0,))
+
+    def test_situacao_e_observacao_do_operador_resistem_a_regravacao_dos_destinos(self):
+        from core.repositories.atendimento.pos_venda import registrar_contatos_encaminhados
+
+        self.preparar()
+        consulta = "SELECT id_conversa, situacao, observacao FROM chatbot.atendimento_pos_venda"
+        conversa, situacao, observacao = self.adm.execute(consulta).fetchone()
+        self.assertEqual((situacao, observacao), ("Não encaminhado", None))
+        editar = "UPDATE chatbot.atendimento_pos_venda SET situacao=%s, observacao=%s WHERE id_conversa=%s"
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            self.adm.execute(editar, ("Resolvido", "Ainda no bot", conversa))
+
+        self.fila("Quero falar com um humano")
+        self.ciclo()
+        for nova_situacao, nota in (("Aguardando cliente", "Enviei a previsão."), ("Resolvido", "Entrega confirmada.")):
+            self.adm.execute(editar, (nova_situacao, nota, conversa))
+            with self.adm.cursor() as cursor:
+                registrar_contatos_encaminhados(conversa, "557582467000", "557592087803", cursor)
+            self.assertEqual(self.adm.execute(consulta).fetchone(), (conversa, nova_situacao, nota))
 
     def test_encaminhamento_universal_apos_perder_nota_usa_resumo_parcial(self):
         from urllib.parse import parse_qs, urlsplit

@@ -2,6 +2,10 @@
 
 O webhook serve a API, o Admin e o painel. O worker de fluxo processa o atendimento de sete etapas. O worker de consumo atualiza os dados de cobrança da Meta.
 
+## Situação do atendimento na Beta V0.7.0
+
+Em uma base V0.6.0, execute uma vez a [migração completa](migrations/20261127_situacao_atendimento.sql). A transação cria as duas colunas por conversa e reconhece encaminhamentos anteriores pelos destinos gravados ou pelo motivo de encerramento de encaminhamento. A observação começa nula. A instalação nova já recebe os campos e o gatilho no DDL.
+
 ## Itens das notas na Beta V0.6.0
 
 Sobre a V0.5.0, execute uma vez o [script completo de migração](migrations/20261127_nota_produtos.sql) no banco da aplicação. A transação atribui um ID às notas existentes e cria a tabela de itens vazia. A unicidade por conversa e número continua permitindo a repetição segura dos envios do worker. Instalações novas recebem a estrutura final pelo `schema.sql`.

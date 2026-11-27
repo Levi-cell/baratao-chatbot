@@ -1,6 +1,6 @@
 # Controle de pós-venda
 
-A futura seção **Controle** acompanha o que acontece depois que o Theo encaminha o cliente ao atendimento humano. O operador encontra a última conversa do chat, vê as notas informadas e registra os produtos e quantidades que confirmou com o cliente. A Beta V0.6.0 entrega a estrutura de notas e itens no PostgreSQL. A planilha, os filtros, a edição e a janela de histórico fazem parte da proposta do painel.
+A futura seção **Controle** acompanha o que acontece depois que o Theo encaminha o cliente ao atendimento humano. O operador encontra a última conversa do chat, vê as notas informadas e registra os produtos e quantidades que confirmou com o cliente. O PostgreSQL já guarda as notas e os itens desde a Beta V0.6.0 e a situação e a observação por conversa desde a V0.7.0. A planilha, os filtros, a edição e a janela de histórico fazem parte da proposta do painel.
 
 ## Como uma linha representa uma compra
 
@@ -31,6 +31,17 @@ Depois de conferir as compras, o operador pode chegar a esta planilha ilustrativ
 
 Há uma conversa, duas notas, três itens e quatro unidades. Se a segunda nota também tiver um móvel, **Adicionar produto** nela cria a quarta linha. Se o cliente confirmar outra unidade da mesma poltrona naquela nota, a quantidade passa de 2 para 3. O relato original “Ambos” continua disponível na conversa.
 
+## Situação do atendimento
+
+| Situação | Quando aparece | Quem registra |
+|---|---|---|
+| Não encaminhado | Desde a abertura, enquanto o cliente está com o Theo. Uma tentativa de envio que falha mantém esta situação. | Banco, na criação da ficha |
+| Já encaminhado | O envio dos contatos foi aceito pela Meta e o worker confirmou os destinos no banco, inclusive por tratamento universal. | Banco, na mesma transação do worker |
+| Aguardando cliente | O operador enviou uma mensagem e aguarda a resposta do cliente. | Operador |
+| Resolvido | O operador confirmou a conclusão do caso. | Operador |
+
+Uma nova conversa recebe sua própria situação e sua própria observação, mesmo quando o chat já tem um atendimento resolvido. A recuperação do worker preserva as alterações do operador. O campo **Observação** guarda o acompanhamento humano. O campo **Detalhes** guarda o relato coletado pelo Theo.
+
 ## Geração da planilha e filtros
 
 1. Considerar os chats das centrais que o operador tem permissão para consultar. Selecionar a conversa mais recente de cada chat por início da conversa, com o ID como desempate. Aplicar os filtros a esse resultado, de modo que uma conversa anterior dentro do período só apareça no histórico.
@@ -45,7 +56,7 @@ Há uma conversa, duas notas, três itens e quatro unidades. Se a segunda nota t
 - **Editar quantidade** grava o total de unidades confirmado. Para um código já presente na nota, a interface deve apresentar a linha existente e permitir informar o novo total. Isso evita somar duas vezes quando o operador repete um clique após uma falha de conexão.
 - **Editar os campos de negócio** deve salvar a mudança no PostgreSQL e atualizar as demais linhas que compartilham aquele dado. Uma correção da nota vale para todos os seus itens. A filial é calculada pelos dois últimos dígitos da nota, de modo que editar a filial requer corrigir e validar o número. Escolher outro código altera o produto daquela compra. Uma correção no cadastro geral do produto teria alcance sobre todas as notas que o referenciam e merece uma ação própria.
 - **Titular e contato** devem indicar se a edição vale para o atendimento selecionado ou para o cadastro global do cliente. Como o telefone e o CPF participam da conciliação de identidade, a sugestão é corrigir a ficha do atendimento por padrão e reservar a alteração global a uma ação explícita, com as verificações de identidade do projeto.
-- **Situação e observação** acompanham o trabalho humano mesmo após o fechamento da conversa no bot. Proposta para a primeira versão do painel: guardar esses campos por atendimento e refletir a edição em todas as suas linhas. Situações possíveis incluem “Aguardando atendimento”, “Em andamento”, “Aguardando cliente” e “Resolvido”. A persistência desses dois campos operacionais fica para a implementação do Controle.
+- **Situação e observação** pertencem à conversa. Uma alteração do operador é exibida em todas as linhas de notas e produtos daquele atendimento. A observação aceita texto livre e começa em branco.
 - **Edição simultânea** deve avisar se outro operador já alterou a linha antes do salvamento. Para a implementação do painel, recomenda-se registrar o operador, o horário e os valores alterados. Datas de conversa, IDs internos e a mensagem original do cliente servem como referência para o histórico.
 
 A contagem de atendimentos usa conversas distintas. A contagem de notas usa IDs de nota distintos e a de unidades soma as quantidades dos itens. Assim, acrescentar uma linha de produto atualiza o total de peças e preserva o total de clientes atendidos.

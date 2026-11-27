@@ -153,6 +153,12 @@ class Conversa(models.Model):
 
 
 class AtendimentoPosVenda(models.Model):
+    class Situacao(models.TextChoices):
+        NAO_ENCAMINHADO = "Não encaminhado", "Não encaminhado"
+        JA_ENCAMINHADO = "Já encaminhado", "Já encaminhado"
+        AGUARDANDO_CLIENTE = "Aguardando cliente", "Aguardando cliente"
+        RESOLVIDO = "Resolvido", "Resolvido"
+
     conversa = models.OneToOneField(Conversa, models.PROTECT, primary_key=True, db_column="id_conversa")
     nome_titular = models.TextField(null=True)
     cpf_titular = models.CharField(max_length=11, null=True)
@@ -165,6 +171,8 @@ class AtendimentoPosVenda(models.Model):
     encaminhado_baratao = models.CharField(null=True)
     encaminhado_atacadao = models.CharField(null=True)
     telefone_compartilhado = models.CharField(null=True, editable=False)
+    situacao = models.TextField("situação", choices=Situacao, default=Situacao.NAO_ENCAMINHADO)
+    observacao = models.TextField("observação", null=True, blank=True)
 
     class Meta:
         managed = False

@@ -36,6 +36,10 @@ Commit: `89a72ec3e55b9c11bcd575eb7167ccb46807a6fb`
 
 ### Beta V0.6.0 — Vincula produtos e quantidades às notas dos atendimentos
 
+Commit: `fcb256e954af0af9f459bf057fdaa100f6fe5936`
+
+### Beta V0.7.0 — Registra situação e observação por atendimento
+
 Commit: PENDENTE
 
 ## Padrão de numeração

@@ -143,9 +143,42 @@ CREATE TABLE chatbot.atendimento_pos_venda (
     encaminhado_baratao varchar CHECK (encaminhado_baratao ~ '^[1-9][0-9]{7,14}$'),
     encaminhado_atacadao varchar CHECK (encaminhado_atacadao ~ '^[1-9][0-9]{7,14}$'),
     telefone_compartilhado varchar CHECK (telefone_compartilhado ~ '^[1-9][0-9]{0,14}$'),
+    situacao text NOT NULL DEFAULT 'Não encaminhado'
+        CONSTRAINT atendimento_situacao_valida CHECK (situacao IN ('Não encaminhado', 'Já encaminhado', 'Aguardando cliente', 'Resolvido')),
+    observacao text,
     CHECK (encaminhado_baratao <> encaminhado_atacadao),
     CHECK (foi_a_loja IS NULL OR assunto IS NOT DISTINCT FROM 'assistencia')
 );
+
+-- O worker confirma os destinos na mesma transação do encaminhamento.
+CREATE FUNCTION chatbot.sincronizar_situacao_atendimento() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' AND OLD.situacao <> 'Não encaminhado' THEN
+        IF NEW.situacao = 'Não encaminhado' THEN
+            RAISE EXCEPTION 'O encaminhamento já foi registrado neste atendimento.'
+                USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    IF NEW.encaminhado_baratao IS NULL AND NEW.encaminhado_atacadao IS NULL THEN
+        IF NEW.situacao <> 'Não encaminhado' THEN
+            RAISE EXCEPTION 'O atendimento aguarda o encaminhamento ao setor humano.'
+                USING ERRCODE = '23514';
+        END IF;
+    ELSIF NEW.situacao = 'Não encaminhado' THEN
+        NEW.situacao := 'Já encaminhado';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER atendimento_sincroniza_situacao
+    BEFORE INSERT OR UPDATE OF encaminhado_baratao, encaminhado_atacadao, situacao
+    ON chatbot.atendimento_pos_venda
+    FOR EACH ROW EXECUTE FUNCTION chatbot.sincronizar_situacao_atendimento();
 
 CREATE TABLE chatbot.etiqueta_conversa (
     id_conversa int NOT NULL REFERENCES chatbot.conversa,
@@ -6386,8 +6419,8 @@ class WorkerPostgresTests(unittest.TestCase):
         self.ciclo()
         self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_humano"))
         self.assertEqual(self.adm.execute("""
-            SELECT produto, encaminhado_atacadao, encaminhado_baratao FROM chatbot.atendimento_pos_venda
-        """).fetchone(), (None, "557592087803", "557582467000"))
+            SELECT produto, encaminhado_atacadao, encaminhado_baratao, situacao FROM chatbot.atendimento_pos_venda
+        """).fetchone(), (None, "557592087803", "557582467000", "Já encaminhado"))
         cur = self.adm.cursor()
         self.assertEqual(buscar_bloqueio_ativo_por_cliente_unidade("5511999990000", "999", cur).bloqueio_dias, 90)
         self.assertIsNone(buscar_bloqueio_ativo_por_cliente_unidade("5511999990000", "888", cur))
@@ -7070,8 +7103,8 @@ class WorkerPostgresTests(unittest.TestCase):
             self.ciclo()
         self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento"))
         self.assertEqual(self.adm.execute(
-            "SELECT detalhes,encaminhado_atacadao,encaminhado_baratao FROM chatbot.atendimento_pos_venda"
-        ).fetchone(), (relato, "557592087803", "557582467000"))
+            "SELECT detalhes,encaminhado_atacadao,encaminhado_baratao,situacao FROM chatbot.atendimento_pos_venda"
+        ).fetchone(), (relato, "557592087803", "557582467000", "Já encaminhado"))
         partes = self.adm.execute("""
             SELECT parte_resposta,conteudo_texto,interativo FROM chatbot.historico_mensagens
             WHERE id_mensagem_fila=%s AND quem_enviou='bot' ORDER BY parte_resposta
@@ -7107,11 +7140,30 @@ class WorkerPostgresTests(unittest.TestCase):
         self.ciclo()
         self.assertEqual(self.conversa()[:3], (6, 0, True))
         self.assertEqual(self.adm.execute("""
-            SELECT detalhes, encaminhado_atacadao, encaminhado_baratao FROM chatbot.atendimento_pos_venda
-        """).fetchone(), (None, None, None))
+            SELECT detalhes, encaminhado_atacadao, encaminhado_baratao, situacao FROM chatbot.atendimento_pos_venda
+        """).fetchone(), (None, None, None, "Não encaminhado"))
         self.assertEqual(self.adm.execute("""
             SELECT count(*) FROM chatbot.historico_mensagens WHERE id_mensagem_fila=%s AND quem_enviou='bot'
         """, (item,)).fetchone(), (0,))
+
+    def test_situacao_e_observacao_do_operador_resistem_a_regravacao_dos_destinos(self):
+        from core.repositories.atendimento.pos_venda import registrar_contatos_encaminhados
+
+        self.preparar()
+        consulta = "SELECT id_conversa, situacao, observacao FROM chatbot.atendimento_pos_venda"
+        conversa, situacao, observacao = self.adm.execute(consulta).fetchone()
+        self.assertEqual((situacao, observacao), ("Não encaminhado", None))
+        editar = "UPDATE chatbot.atendimento_pos_venda SET situacao=%s, observacao=%s WHERE id_conversa=%s"
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            self.adm.execute(editar, ("Resolvido", "Ainda no bot", conversa))
+
+        self.fila("Quero falar com um humano")
+        self.ciclo()
+        for nova_situacao, nota in (("Aguardando cliente", "Enviei a previsão."), ("Resolvido", "Entrega confirmada.")):
+            self.adm.execute(editar, (nova_situacao, nota, conversa))
+            with self.adm.cursor() as cursor:
+                registrar_contatos_encaminhados(conversa, "557582467000", "557592087803", cursor)
+            self.assertEqual(self.adm.execute(consulta).fetchone(), (conversa, nova_situacao, nota))
 
     def test_encaminhamento_universal_apos_perder_nota_usa_resumo_parcial(self):
         from urllib.parse import parse_qs, urlsplit
@@ -7977,6 +8029,12 @@ class Conversa(models.Model):
 
 
 class AtendimentoPosVenda(models.Model):
+    class Situacao(models.TextChoices):
+        NAO_ENCAMINHADO = "Não encaminhado", "Não encaminhado"
+        JA_ENCAMINHADO = "Já encaminhado", "Já encaminhado"
+        AGUARDANDO_CLIENTE = "Aguardando cliente", "Aguardando cliente"
+        RESOLVIDO = "Resolvido", "Resolvido"
+
     conversa = models.OneToOneField(Conversa, models.PROTECT, primary_key=True, db_column="id_conversa")
     nome_titular = models.TextField(null=True)
     cpf_titular = models.CharField(max_length=11, null=True)
@@ -7989,6 +8047,8 @@ class AtendimentoPosVenda(models.Model):
     encaminhado_baratao = models.CharField(null=True)
     encaminhado_atacadao = models.CharField(null=True)
     telefone_compartilhado = models.CharField(null=True, editable=False)
+    situacao = models.TextField("situação", choices=Situacao, default=Situacao.NAO_ENCAMINHADO)
+    observacao = models.TextField("observação", null=True, blank=True)
 
     class Meta:
         managed = False
@@ -10190,6 +10250,7 @@ def atualizar_cpf_do_atendimento(id_conversa, cpf_titular, cursor):
 
 
 def registrar_contatos_encaminhados(id_conversa, telefone_baratao, telefone_atacadao, cursor):
+    """A gravação dos destinos aciona a situação de encaminhamento na mesma transação."""
     cursor.execute("""
         UPDATE chatbot.atendimento_pos_venda
         SET encaminhado_baratao = %s, encaminhado_atacadao = %s

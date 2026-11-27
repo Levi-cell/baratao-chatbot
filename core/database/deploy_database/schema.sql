@@ -124,9 +124,42 @@ CREATE TABLE chatbot.atendimento_pos_venda (
     encaminhado_baratao varchar CHECK (encaminhado_baratao ~ '^[1-9][0-9]{7,14}$'),
     encaminhado_atacadao varchar CHECK (encaminhado_atacadao ~ '^[1-9][0-9]{7,14}$'),
     telefone_compartilhado varchar CHECK (telefone_compartilhado ~ '^[1-9][0-9]{0,14}$'),
+    situacao text NOT NULL DEFAULT 'Não encaminhado'
+        CONSTRAINT atendimento_situacao_valida CHECK (situacao IN ('Não encaminhado', 'Já encaminhado', 'Aguardando cliente', 'Resolvido')),
+    observacao text,
     CHECK (encaminhado_baratao <> encaminhado_atacadao),
     CHECK (foi_a_loja IS NULL OR assunto IS NOT DISTINCT FROM 'assistencia')
 );
+
+-- O worker confirma os destinos na mesma transação do encaminhamento.
+CREATE FUNCTION chatbot.sincronizar_situacao_atendimento() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' AND OLD.situacao <> 'Não encaminhado' THEN
+        IF NEW.situacao = 'Não encaminhado' THEN
+            RAISE EXCEPTION 'O encaminhamento já foi registrado neste atendimento.'
+                USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    IF NEW.encaminhado_baratao IS NULL AND NEW.encaminhado_atacadao IS NULL THEN
+        IF NEW.situacao <> 'Não encaminhado' THEN
+            RAISE EXCEPTION 'O atendimento aguarda o encaminhamento ao setor humano.'
+                USING ERRCODE = '23514';
+        END IF;
+    ELSIF NEW.situacao = 'Não encaminhado' THEN
+        NEW.situacao := 'Já encaminhado';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER atendimento_sincroniza_situacao
+    BEFORE INSERT OR UPDATE OF encaminhado_baratao, encaminhado_atacadao, situacao
+    ON chatbot.atendimento_pos_venda
+    FOR EACH ROW EXECUTE FUNCTION chatbot.sincronizar_situacao_atendimento();
 
 CREATE TABLE chatbot.etiqueta_conversa (
     id_conversa int NOT NULL REFERENCES chatbot.conversa,
