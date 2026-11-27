@@ -8,6 +8,10 @@ Commit: `fc8fc9dc6f2421534a1ebd7b29bbdb4808479b7c`
 
 ### Beta V0.0.0 — Otimiza logs do webhook e rastreia mensagens processadas
 
+Commit: `3355f8cffd76b3da58f38e205dcd01b86c234d0b`
+
+### Beta V0.0.1 — Reformata saudação e pedido de detalhes do atendimento
+
 Commit: PENDENTE
 
 ## Padrão de numeração

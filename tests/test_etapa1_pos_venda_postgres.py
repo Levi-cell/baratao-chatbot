@@ -827,7 +827,7 @@ class WorkerPostgresTests(unittest.TestCase):
         self.adm.execute("UPDATE chatbot.fila_mensagens SET next_attempt_at=now() WHERE id_mensagem=%s", (item,))
         self.ciclo()
         self.assertIsNone(self.adm.execute("SELECT nome_titular FROM chatbot.cliente").fetchone()[0])
-        self.assertIn("Sou o Theo", self.wa.send_message.call_args.kwargs["text"])
+        self.assertIn("eu sou o Theo", self.wa.send_message.call_args.kwargs["text"])
 
     def test_migracao_remapeia_encerramento_preservando_prazo_e_historico(self):
         self.carregar_catalogo("tests/fixtures/catalogo_pos_venda_20261118.sql")
@@ -1048,6 +1048,7 @@ class WorkerPostgresTests(unittest.TestCase):
         self.fila("Sim")
         self.ciclo()
         self.assertEqual(self.wa.send_message.call_args.kwargs["text"], MENSAGEM_DETALHES)
+        self.assertTrue(MENSAGEM_DETALHES.startswith("Certo, estamos quase lá! 😁\n\nPara podermos"))
         self.assertIsNone(self.adm.execute("SELECT detalhes FROM chatbot.atendimento_pos_venda").fetchone()[0])
 
     def test_nota_perdida_avanca_para_relato_sem_criar_pedido(self):

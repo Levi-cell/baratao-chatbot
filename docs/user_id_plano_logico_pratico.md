@@ -2729,10 +2729,13 @@ from core.integrations.whatsapp.pywa_functions.saudacao import obter_saudacao_po
 
 
 MENSAGEM_PADRAO_ETAPA1 = (
-    "{saudacao}! Sou o Theo, assistente do pós-venda. Para começar, me informe o nome "
-    "completo do titular da compra. Lembrando que por aqui só consigo entender mensagens "
-    "de texto, caso você não seja o titular da compra recomendamos que direcione esse "
-    "atendimento para o titular da compra."
+    "{saudacao}, eu sou o Theo, assistente do pós-venda do Baratão e Atacadão! 😁\n\n"
+    "Olha antes de começarmos peço que envie somente mensagens de texto!  "
+    "Caso você não seja o titular da compra, recomendamos que direcione esse atendimento "
+    "para o titular, caso foi você que fez a compra ignore este aviso.\n\n"
+    "Antes de te encaminhar para um atendimento humano, preciso coletar algumas informações "
+    "suas tá ? vai levar apenas alguns minutos, para começar, me informe o nome completo "
+    "do titular da compra."
 )
 MENSAGEM_NOME_INVALIDO = (
     "Desculpa, não consegui entender, em uma única mensagem me informe "
@@ -11429,7 +11432,12 @@ def enviar_etapa6_detalhes(cliente_telefone, phone_id_unidade, *, repetir=False)
 
 ```python
 """Coleta do relato de pós-venda."""
-MENSAGEM_DETALHES = "Certo, agora me conte em uma única mensagem mais detalhes da situação."
+
+MENSAGEM_DETALHES = (
+    "Certo, estamos quase lá! 😁\n\n"
+    "Para podermos te ajudar da melhor forma possível, descreva com o máximo de detalhes "
+    "a sua situação e o que você precisa."
+)
 ```
 
 ## 72. `core/integrations/whatsapp/messages/encaminhamento_pos_venda.py` (usar)

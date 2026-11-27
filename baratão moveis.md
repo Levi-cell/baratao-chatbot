@@ -129,12 +129,12 @@ A cada entrada, localizar o chat do cliente com a central e retomar a conversa a
 
 | Passo | O que o cliente recebe | Resposta e efeito |
 | --- | --- | --- |
-| 1 · Nome | “Boa tarde! Sou o Theo, assistente do pós-venda. Para começar, me informe o nome completo do titular da compra. Lembrando que por aqui só consigo entender mensagens de texto, caso você não seja o titular da compra recomendamos que direcione esse atendimento para o titular da compra.” A saudação acompanha o horário. | Guardar o nome completo validado. Não interpretar a entrada que disparou a apresentação como resposta ao nome. |
+| 1 · Nome | “Boa tarde, eu sou o Theo, assistente do pós-venda do Baratão e Atacadão! 😁<br><br>Olha antes de começarmos peço que envie somente mensagens de texto!  Caso você não seja o titular da compra, recomendamos que direcione esse atendimento para o titular, caso foi você que fez a compra ignore este aviso.<br><br>Antes de te encaminhar para um atendimento humano, preciso coletar algumas informações suas tá ? vai levar apenas alguns minutos, para começar, me informe o nome completo do titular da compra.” A saudação acompanha o horário. | Guardar o nome completo validado. Não interpretar a entrada que disparou a apresentação como resposta ao nome. |
 | 2 · CPF | Com telefone disponível, “Certo Carlos. Em uma única mensagem, me informe o CPF do titular da compra.” Após compartilhar o contato, “Obrigado por compartilhar seu contato Ana! Em uma única mensagem, me informe o CPF do titular da compra.” Usar o primeiro nome do titular. | Extrair um CPF com 11 dígitos, guardando apenas os números no cadastro e no atendimento. |
 | 3 · Produto | “Sobre qual tipo de produto você quer falar?” | Botões **Apenas Estofados**, **Apenas Móveis** e **Estofados e Móveis**; rodapé **Selecione apenas uma opção abaixo.** Etiquetas **Estofados**, **Móveis** e **Ambos**. |
 | 4 · Assunto | “Certo, sobre qual assunto você quer falar? Selecione apenas uma opção.” | Registrar o assunto na conversa e avançar para a etapa 5. |
 | 5 · Pedidos | “Me informe o número do pedido que aparece na sua nota.” | Extrair os números válidos ou aceitar **Perdi a nota**, por botão ou texto. |
-| 6 · Situação | “Certo, agora me conte em uma única mensagem mais detalhes da situação.” | Salvar o relato deste atendimento. |
+| 6 · Situação | “Certo, estamos quase lá! 😁<br><br>Para podermos te ajudar da melhor forma possível, descreva com o máximo de detalhes a sua situação e o que você precisa.” | Salvar o relato deste atendimento. |
 | 7 · Encaminhamento | Agradecer pelas informações e apresentar o contato de Móveis, o de Sofás ou os dois, conforme o produto desta conversa. | Aplicar a variante do produto e enviar uma mensagem com um botão ou um carrossel de dois cartões. Registrar os números apresentados depois do aceite da Meta. |
 
 A lista de assunto usa títulos curtos, com a explicação na descrição da opção.

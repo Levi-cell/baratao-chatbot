@@ -82,7 +82,8 @@ class Etapa1Tests(unittest.TestCase):
     def test_primeiro_contato_apresenta_regras_mesmo_com_midia_ou_humano(self):
         for tipo, texto in (("audio", None), ("image", None), ("text", "Quero um HUMANO"), ("text", "João da Silva")):
             envio = flow_sender(contexto(apresentacao=True, tipo=tipo, texto=texto, turnos=3))
-            self.assertRegex(envio["mensagem_bot"],r"^(Bom dia|Boa tarde|Boa noite)! Sou o Theo")
+            self.assertRegex(envio["mensagem_bot"], r"^(Bom dia|Boa tarde|Boa noite), eu sou o Theo")
+            self.assertEqual(envio["mensagem_bot"].count("\n\n"), 2)
             self.assertIn("nome completo do titular",envio["mensagem_bot"])
             self.assertEqual(envio["id_etapa_resultante"], 1)
             self.assertNotIn("evento_transicao", envio)
