@@ -46,6 +46,10 @@ INSTALLED_APPS = [
     'monitoramento.apps.MonitoramentoConfig',
 ]
 
+# As tabelas do webhook pertencem ao DDL versionado. O Django usa os modelos
+# vigentes para criar permissões, sem manter uma segunda sequência de migrations.
+MIGRATION_MODULES = {"webhook": None}
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',

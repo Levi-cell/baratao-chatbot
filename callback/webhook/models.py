@@ -1,14 +1,10 @@
 """Mapeamento de leitura e administração do schema chatbot, criado pelo DDL do projeto."""
-from django.apps import apps as django_apps
 from django.conf import settings
-from django.contrib.auth import get_permission_codename
 from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
-from django.db import models, router
+from django.db import models
 from django.db.models.functions import Right
-from django.db.models.signals import post_migrate
-from django.dispatch import receiver
 
 
 class CentralPosVenda(models.Model):
@@ -396,24 +392,3 @@ class ConsumoMetaColeta(models.Model):
         managed = False
         db_table = "consumo_meta_coletas"
         verbose_name = "coleta de consumo"
-
-
-@receiver(post_migrate, sender=CentralPosVenda._meta.app_config)
-def criar_permissoes_painel(sender, using, apps=django_apps, **kwargs):
-    # A aplicação instala suas tabelas via DDL. Elas não aparecem no estado
-    # histórico usado pelo sinal padrão que cria as permissões do Django.
-    try:
-        permissao = apps.get_model("auth", "Permission")
-        tipo = apps.get_model("contenttypes", "ContentType")
-    except LookupError:
-        return
-    if not router.allow_migrate_model(using, permissao):
-        return
-    for modelo in sender.get_models():
-        opts = modelo._meta
-        tipo_modelo = tipo.objects.db_manager(using).get_for_model(modelo)
-        for acao in opts.default_permissions:
-            permissao.objects.using(using).get_or_create(
-                content_type=tipo_modelo, codename=get_permission_codename(acao, opts),
-                defaults={"name": f"Can {acao} {opts.verbose_name_raw}"},
-            )
