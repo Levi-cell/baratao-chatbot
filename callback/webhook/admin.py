@@ -32,7 +32,7 @@ class CentralPosVendaAdmin(ConsultasRelacionadasMixin, admin.ModelAdmin):
     fieldsets = (
         ("Atendimento", {"fields": ("nome", "ativa", "nome_agente", "genero_agente")}),
         ("Remetente no WhatsApp", {"fields": ("telefone", "waba_id", "phone_number_id", "waac_id")}),
-        ("Encaminhamento aos setores", {"fields": ("telefone_moveis", "telefone_sofas")}),
+        ("Redes de pós-venda", {"fields": ("telefone_baratao", "telefone_atacadao")}),
         ("Monitoramento", {"fields": ("consultas_do_registro", "id_fuso", "nome_fuso", "fuso_verificado_em")}),
     )
     form = CentralPosVendaForm
@@ -179,7 +179,8 @@ class HistoricoAdmin(SomenteConsulta):
 
 @admin.register(models.FilialCompra)
 class FilialAdmin(SomenteConsulta):
-    list_display = ("codigo", "nome")
+    list_display = ("codigo", "nome", "grupo")
+    list_filter = ("grupo",)
     search_fields = ("codigo", "nome")
     ordering = ("codigo",)
 

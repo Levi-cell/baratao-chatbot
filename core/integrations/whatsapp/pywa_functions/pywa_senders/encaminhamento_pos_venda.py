@@ -1,4 +1,4 @@
-"""Um contato para o produto escolhido ou o carrossel para os dois setores."""
+"""Encaminhamento por rede das filiais das notas desta conversa."""
 
 import os
 import re
@@ -9,12 +9,12 @@ from pywa.types import ImageCarouselCard, URLButton
 from core.integrations.whatsapp.exceptions import ErroEnvioMeta
 from core.etapas_pos_venda import ETAPA_ENCAMINHAMENTO, EVENTO_SITUACAO_INFORMADA
 from core.integrations.whatsapp.messages.encaminhamento_pos_venda import (
-    MENSAGEM_AMBOS_PRODUTOS, MENSAGEM_PRODUTO_NAO_INFORMADO, MENSAGEM_POR_SETOR,
-    MENSAGEM_FINAL, ROTULO_ESTOFADOS, ROTULO_MOVEIS, mensagem_de_contato, montar_resumo_encaminhamento,
+    MENSAGEM_DUAS_REDES, MENSAGEM_SEM_NOTA, MENSAGEM_NOTA_PERDIDA, MENSAGEM_POR_GRUPO,
+    ROTULOS_POS_VENDA, mensagem_de_contato, montar_resumo_encaminhamento,
 )
 from core.integrations.whatsapp.pywa_functions.cliente import conta_wa
 from core.integrations.whatsapp.pywa_functions.resposta_envio import extrair_id_hash_msg_bot
-from core.validacoes.encaminhamento_pos_venda import setores_encaminhamento
+from core.validacoes.encaminhamento_pos_venda import grupos_encaminhamento
 from .texto_pos_venda import enviar_texto_pos_venda
 
 
@@ -26,12 +26,12 @@ def _resumo_do_atendimento(contexto):
     )
 
 
-def _botao_contato(central, setor, resumo):
-    numero = central.get(f"telefone_{setor}")
+def _botao_contato(central, grupo, resumo):
+    numero = central.get(f"telefone_{grupo}")
     if not re.fullmatch(r"[1-9][0-9]{7,14}", str(numero or "")):
         raise ValueError("Telefone de pós-venda inválido.")
     return URLButton(
-        title=ROTULO_ESTOFADOS if setor == "sofas" else ROTULO_MOVEIS,
+        title=ROTULOS_POS_VENDA[grupo],
         url=f"https://wa.me/{numero}?text={quote(resumo, safe='')}",
     )
 
@@ -42,15 +42,15 @@ def montar_cartoes(contexto):
     url = urlsplit(base)
     if url.scheme != "https" or not url.netloc or url.query or url.fragment or url.username:
         raise ValueError("Configure WHATSAPP_MIDIAS_BASE_URL com a URL HTTPS pública das imagens.")
-    if central.get("telefone_sofas") == central.get("telefone_moveis"):
+    if central.get("telefone_atacadao") == central.get("telefone_baratao"):
         raise ValueError("A central precisa dos dois contatos distintos de pós-venda.")
     resumo = _resumo_do_atendimento(contexto)
     return [
         ImageCarouselCard(
             image=f"{base}/{arquivo}.png",
-            buttons=_botao_contato(central, setor, resumo),
+            buttons=_botao_contato(central, grupo, resumo),
         )
-        for arquivo, setor in (("estofados", "sofas"), ("moveis", "moveis"))
+        for arquivo, grupo in (("estofados", "atacadao"), ("moveis", "baratao"))
     ]
 
 
@@ -58,21 +58,26 @@ def enviar_encaminhamento(contexto, evento):
     mensagem = contexto["mensagem_cliente_atual"]
     phone = mensagem["id_phone_unidade"]
     telefone = contexto.get("destinatario_envio", mensagem.get("cliente_telefone"))
-    setores = setores_encaminhamento(contexto.get("produto"))
+    grupos = grupos_encaminhamento(contexto)
     conclusao = evento == EVENTO_SITUACAO_INFORMADA
-    if len(setores) == 1:
-        setor = setores[0]
-        texto = MENSAGEM_FINAL if conclusao else MENSAGEM_POR_SETOR[setor]
+    if len(grupos) == 1:
+        grupo = grupos[0]
+        texto = MENSAGEM_POR_GRUPO[grupo]
         envio = enviar_texto_pos_venda(
             telefone, phone, mensagem_de_contato(texto, contexto.get("assunto")),
-            ETAPA_ENCAMINHAMENTO, botoes=_botao_contato(contexto["central"], setor, _resumo_do_atendimento(contexto)),
+            ETAPA_ENCAMINHAMENTO, botoes=_botao_contato(contexto["central"], grupo, _resumo_do_atendimento(contexto)),
         )
         if not conclusao:
             envio["tipo_tratamento"] = evento
-        envio[f"encaminhado_{setor}"] = contexto["central"][f"telefone_{setor}"]
+        envio[f"encaminhado_{grupo}"] = contexto["central"][f"telefone_{grupo}"]
         return envio
 
-    texto = MENSAGEM_AMBOS_PRODUTOS if contexto.get("produto") == "ambos" else MENSAGEM_PRODUTO_NAO_INFORMADO
+    if contexto.get("perdeu_nota"):
+        texto = MENSAGEM_NOTA_PERDIDA
+    elif contexto.get("grupos_das_notas"):
+        texto = MENSAGEM_DUAS_REDES
+    else:
+        texto = MENSAGEM_SEM_NOTA
     texto = mensagem_de_contato(texto, contexto.get("assunto"))
     cartoes = montar_cartoes(contexto)
     try:
@@ -89,8 +94,8 @@ def enviar_encaminhamento(contexto, evento):
         "interativo": {"type": "carousel", "body": {"text": texto},
                        "action": {"cards": [card.to_dict(i) for i, card in enumerate(cartoes)]}},
         "id_etapa_resultante": ETAPA_ENCAMINHAMENTO,
-        "encaminhado_sofas": contexto["central"]["telefone_sofas"],
-        "encaminhado_moveis": contexto["central"]["telefone_moveis"],
+        "encaminhado_atacadao": contexto["central"]["telefone_atacadao"],
+        "encaminhado_baratao": contexto["central"]["telefone_baratao"],
     }
     if not conclusao:
         envio["tipo_tratamento"] = evento

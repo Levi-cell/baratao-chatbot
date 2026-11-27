@@ -10,6 +10,10 @@ Em **Administração → Centrais de pós-venda**, o cadastro valida o remetente
 
 Ao excluir uma central, a confirmação mostra os vínculos afetados. A exclusão de uma central sem histórico remove também os vínculos de acesso e sua agenda de coletas. Chats, mensagens, identidades, bloqueios e consumo registrado protegem a central contra exclusão. Para interromper o atendimento preservando esses registros, desmarque **Ativa**. A exclusão local mantém o registro do número na plataforma Meta.
 
+## Rede da filial (Beta V0.4.0)
+
+Cada filial possui um grupo obrigatório, Atacadão ou Baratão. O catálogo classifica explicitamente os 26 sufixos. Os números do pós-venda são configuráveis por rede em cada central. O atendimento guarda os destinos oferecidos após o aceite da Meta. A migração preserva os números registrados nos atendimentos anteriores. [Migração a partir da V0.3.0](../../deploy/migrations/20261127_encaminhamento_por_rede.sql)
+
 ## Conferência do contato na etapa de CPF (Beta V0.3.0)
 
 A V0.3.0 acrescenta `chatbot.atendimento_pos_venda.telefone_compartilhado` para os casos em que o telefone confirmado já pertence a outro cadastro. O índice parcial por CPF e ID acelera a busca inclusive em bases com duplicatas antigas. A coluna é opcional. Os registros anteriores ficam com NULL e as etapas e transições permanecem iguais. Para uma base na Beta V0.2.1, usar a [migração incremental](../../deploy/migrations/20261127_contato_conferencia_cpf.sql).

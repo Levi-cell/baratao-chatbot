@@ -61,7 +61,7 @@ class ConsumoPostgresTests(unittest.TestCase):
         self.adm.execute("DELETE FROM chatbot.auth_user")
         self.adm.execute("DELETE FROM chatbot.cliente")
         self.adm.execute("""
-            INSERT INTO chatbot.central_pos_venda (nome,nome_agente,genero_agente,waba_id,phone_number_id,telefone,telefone_moveis,telefone_sofas,id_fuso,nome_fuso)
+            INSERT INTO chatbot.central_pos_venda (nome,nome_agente,genero_agente,waba_id,phone_number_id,telefone,telefone_baratao,telefone_atacadao,id_fuso,nome_fuso)
             VALUES ('Central QA','Theo','masculino','100','101','551100000001','557592087803','557582467000',25,'America/Sao_Paulo'),
                    ('Outra central QA','Theo','masculino','100','102','551100000002','557592087803','557582467000',25,'America/Sao_Paulo');
             INSERT INTO chatbot.auth_user (id) VALUES (1),(2);

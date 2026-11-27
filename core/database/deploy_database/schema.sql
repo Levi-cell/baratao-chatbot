@@ -16,10 +16,10 @@ CREATE TABLE chatbot.central_pos_venda (
     -- Preencher somente com o ID de conta WhatsApp verificado para este número.
     waac_id varchar UNIQUE CHECK (waac_id ~ '^[1-9][0-9]*$' AND waac_id <> phone_number_id),
     telefone varchar NOT NULL UNIQUE,
-    telefone_moveis varchar CHECK (telefone_moveis ~ '^[1-9][0-9]{7,14}$'),
-    telefone_sofas varchar CHECK (telefone_sofas ~ '^[1-9][0-9]{7,14}$'),
-    CHECK (NOT ativa OR (telefone_moveis IS NOT NULL AND telefone_sofas IS NOT NULL)),
-    CHECK (telefone_moveis <> telefone_sofas)
+    telefone_baratao varchar CHECK (telefone_baratao ~ '^[1-9][0-9]{7,14}$'),
+    telefone_atacadao varchar CHECK (telefone_atacadao ~ '^[1-9][0-9]{7,14}$'),
+    CHECK (NOT ativa OR (telefone_baratao IS NOT NULL AND telefone_atacadao IS NOT NULL)),
+    CHECK (telefone_baratao <> telefone_atacadao)
 );
 
 CREATE TABLE chatbot.cliente (
@@ -115,15 +115,10 @@ CREATE TABLE chatbot.atendimento_pos_venda (
     perdeu_nota boolean,
     foi_a_loja boolean,
     detalhes text CHECK (btrim(detalhes) <> ''),
-    encaminhado_moveis varchar CHECK (encaminhado_moveis ~ '^[1-9][0-9]{7,14}$'),
-    encaminhado_sofas varchar CHECK (encaminhado_sofas ~ '^[1-9][0-9]{7,14}$'),
+    encaminhado_baratao varchar CHECK (encaminhado_baratao ~ '^[1-9][0-9]{7,14}$'),
+    encaminhado_atacadao varchar CHECK (encaminhado_atacadao ~ '^[1-9][0-9]{7,14}$'),
     telefone_compartilhado varchar CHECK (telefone_compartilhado ~ '^[1-9][0-9]{0,14}$'),
-    CHECK (encaminhado_moveis <> encaminhado_sofas),
-    CHECK (CASE coalesce(produto, 'ambos')
-        WHEN 'moveis' THEN encaminhado_sofas IS NULL
-        WHEN 'estofados' THEN encaminhado_moveis IS NULL
-        ELSE (encaminhado_moveis IS NULL) = (encaminhado_sofas IS NULL)
-    END),
+    CHECK (encaminhado_baratao <> encaminhado_atacadao),
     CHECK (foi_a_loja IS NULL OR assunto IS NOT DISTINCT FROM 'assistencia')
 );
 
@@ -135,7 +130,8 @@ CREATE TABLE chatbot.etiqueta_conversa (
 
 CREATE TABLE chatbot.filial_compra (
     codigo text PRIMARY KEY CHECK (codigo ~ '^[0-9]{2}$'),
-    nome text NOT NULL CHECK (btrim(nome) <> '')
+    nome text NOT NULL CHECK (btrim(nome) <> ''),
+    grupo text NOT NULL CHECK (grupo IN ('Atacadão','Baratão'))
 );
 
 CREATE TABLE chatbot.pedido_conversa (

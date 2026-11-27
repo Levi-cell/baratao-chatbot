@@ -32,7 +32,7 @@ class CadastroCentralTests(unittest.TestCase):
         self.request = Mock()
         self.dados = dict(nome="Central QA", nome_agente="Theo", genero_agente="masculino",
                           ativa=True, waba_id="100", phone_number_id="101", telefone="551199990001",
-                          telefone_moveis="551199990002", telefone_sofas="551199990003")
+                          telefone_baratao="551199990002", telefone_atacadao="551199990003")
         self.chamadas = Mock()
         for funcao in ("validar_cache_unidades_disponivel_ou_erro", "validar_phone_number_id_da_waba",
                        "ativar_waba_id", "registrar_numero_whatsapp"):

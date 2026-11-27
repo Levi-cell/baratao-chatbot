@@ -33,10 +33,10 @@ flowchart TD
   mesma --> atual
   final --> aviso{"Assunto é Assistência ou Misto?"}
   aviso -->|Sim| av["Incluir aviso de avarias e orientação sobre a loja"]
-  aviso -->|Não ou ainda desconhecido| sel{"Produto desta conversa"}
+  aviso -->|Não ou ainda desconhecido| sel{"Redes das notas desta conversa"}
   av --> sel
-  sel -->|Somente um| um["Um CTA sem foto para o setor escolhido"]
-  sel -->|Ambos ou ainda desconhecido| dois["Uma mensagem · dois cartões com foto e CTA"]
+  sel -->|Uma rede| um["Um botão sem foto para a rede da nota"]
+  sel -->|Duas redes, nota perdida ou sem nota| dois["Uma mensagem · dois cartões com foto e CTA"]
   um --> enc["Registrar encaminhamento · encerrar · bloquear internamente por 90 dias"]
   dois --> enc
   enc -->|Ao tocar no CTA| humano["Cliente revisa o resumo e envia ao setor humano"]
@@ -51,7 +51,7 @@ flowchart TD
 | Assunto | A lista oferece previsão de entrega, avaria, montador, dois ou mais assuntos e outros. Texto com sinônimos também vale. Assuntos diferentes na mesma frase geram Misto. Uma mídia repete a lista. |
 | Pedido | Cada número tem dígitos, um ponto e dois dígitos de filial cadastrada. Uma mensagem pode conter vários pedidos separados. Uma falha invalida o lote inteiro. “Perdi a nota” vale por texto ou pelo botão. Uma mídia reapresenta o botão. |
 | Detalhes | Texto livre não vazio conclui o relato. Uma mídia pede a descrição em texto. O comando de humano tem prioridade sobre a coleta. |
-| Encaminhamento | O botão abre o WhatsApp do setor com rascunho editável. O resumo inclui os dados disponíveis e cada nota com sua filial. O relato aparece no último parágrafo. Os dois setores usam o mesmo resumo quando recebem um carrossel. |
+| Encaminhamento | O botão abre o WhatsApp do setor com rascunho editável. O resumo inclui os dados disponíveis e cada nota com sua filial. O relato aparece no último parágrafo. As duas redes usam o mesmo resumo quando recebem um carrossel. |
 
 **Exemplo de recuperação.** No CPF, um áudio gera o primeiro aviso. Um texto com dez dígitos gera a segunda correção. Uma foto gera a terceira. Se o cliente mandar um CPF válido em seguida, recebe os botões de produto e começa a nova etapa com zero repetições. Se mandar outro áudio, recebe o contato humano e começa o bloqueio interno de 90 dias. Só um turno com resposta confirmada consome uma repetição.
 

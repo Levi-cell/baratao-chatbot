@@ -21,9 +21,12 @@ def pediu_humano(tipo, texto):
     return tipo == "text" and "humano" in (texto or "").casefold()
 
 
-def setores_encaminhamento(produto):
-    if produto == "moveis":
-        return ("moveis",)
-    if produto == "estofados":
-        return ("sofas",)
-    return ("sofas", "moveis")
+def grupos_encaminhamento(contexto):
+    """Usa todas as notas aceitas da conversa, inclusive no encaminhamento antecipado."""
+    grupos = contexto.get("grupos_das_notas") or set()
+    if not contexto.get("perdeu_nota"):
+        if grupos == {"Atacadão"}:
+            return ("atacadao",)
+        if grupos == {"Baratão"}:
+            return ("baratao",)
+    return ("atacadao", "baratao")

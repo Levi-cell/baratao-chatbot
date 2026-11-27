@@ -19,13 +19,13 @@ from core.repositories.atendimento.pos_venda import (
     atualizar_assunto_do_atendimento, registrar_detalhes,
 )
 from core.validacoes.assunto_pos_venda import ASSUNTOS
-from core.validacoes.encaminhamento_pos_venda import setores_encaminhamento
+from core.validacoes.encaminhamento_pos_venda import grupos_encaminhamento
 from core.validacoes.produto_pos_venda import PRODUTOS
 from core.validacoes.pedidos_pos_venda import pedidos_de_filiais_cadastradas, transicao_dos_pedidos
 from core.repositories.atendimento.pedidos import inserir_pedidos_da_conversa, registrar_situacao_nota
 
 _CAMPOS_EFEITO = frozenset({
-    "nome_titular", "cpf_titular", "produto", "assunto", "encaminhado_moveis", "encaminhado_sofas",
+    "nome_titular", "cpf_titular", "produto", "assunto", "encaminhado_baratao", "encaminhado_atacadao",
     "numeros_pedido", "detalhes",
 })
 
@@ -50,16 +50,16 @@ def _validar_destino(contexto, envio, destino_esperado):
 
 
 def _registrar_encaminhamento(contexto, envio, cursor):
-    """O efeito exige os contatos dos setores definidos para este atendimento."""
+    """O efeito exige os contatos das redes identificadas para este atendimento."""
     _validar_destino(contexto, envio, ETAPA_ENCAMINHAMENTO)
-    setores = setores_encaminhamento(contexto.get("produto"))
-    campos = {f"encaminhado_{setor}" for setor in setores}
+    grupos = grupos_encaminhamento(contexto)
+    campos = {f"encaminhado_{grupo}" for grupo in grupos}
     if envio["evento_transicao"] == EVENTO_SITUACAO_INFORMADA:
         campos.add("detalhes")
     _validar_campos_efeito(envio, campos)
     registrar_contatos_encaminhados(
-        contexto["id_conversa"], envio.get("encaminhado_moveis"),
-        envio.get("encaminhado_sofas"), cursor,
+        contexto["id_conversa"], envio.get("encaminhado_baratao"),
+        envio.get("encaminhado_atacadao"), cursor,
     )
     return {"encaminhado": True}
 

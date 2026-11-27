@@ -55,7 +55,7 @@ class WorkerPostgresTests(unittest.TestCase):
         self.carregar_catalogo("core/database/deploy_database/catalogo.sql")
         self.adm.execute("""
             INSERT INTO chatbot.central_pos_venda
-                (nome, nome_agente, genero_agente, waba_id, phone_number_id, telefone, telefone_sofas, telefone_moveis)
+                (nome, nome_agente, genero_agente, waba_id, phone_number_id, telefone, telefone_atacadao, telefone_baratao)
             VALUES ('Central QA', 'Theo', 'masculino', 'waba-falsa', '999', '551100000001', '557592087803', '557582467000'),
                    ('Outra QA', 'Theo', 'masculino', 'waba-falsa', '888', '551100000002', '557592087803', '557582467000');
         """)
@@ -522,7 +522,7 @@ class WorkerPostgresTests(unittest.TestCase):
         self.ciclo()
         self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_humano"))
         self.assertEqual(self.adm.execute("""
-            SELECT produto, encaminhado_sofas, encaminhado_moveis FROM chatbot.atendimento_pos_venda
+            SELECT produto, encaminhado_atacadao, encaminhado_baratao FROM chatbot.atendimento_pos_venda
         """).fetchone(), (None, "557592087803", "557582467000"))
         cur = self.adm.cursor()
         self.assertEqual(buscar_bloqueio_ativo_por_cliente_unidade("5511999990000", "999", cur).bloqueio_dias, 90)
@@ -1196,7 +1196,7 @@ class WorkerPostgresTests(unittest.TestCase):
     def test_conclusao_mista_grava_relato_e_um_carrossel_com_dois_links(self):
         from urllib.parse import parse_qs, urlsplit
         self.preparar_assunto("Estofados e Móveis")
-        for texto in ("Duas ou mais opções acima", "0010.09 e 0010.15"):
+        for texto in ("Duas ou mais opções acima", "0010.09 e 0010.26"):
             self.fila(texto)
             self.ciclo()
         relato = "O sofá rasgou.\nA mesa veio riscada."
@@ -1206,7 +1206,7 @@ class WorkerPostgresTests(unittest.TestCase):
             self.ciclo()
         self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento"))
         self.assertEqual(self.adm.execute(
-            "SELECT detalhes,encaminhado_sofas,encaminhado_moveis FROM chatbot.atendimento_pos_venda"
+            "SELECT detalhes,encaminhado_atacadao,encaminhado_baratao FROM chatbot.atendimento_pos_venda"
         ).fetchone(), (relato, "557592087803", "557582467000"))
         partes = self.adm.execute("""
             SELECT parte_resposta,conteudo_texto,interativo FROM chatbot.historico_mensagens
@@ -1229,7 +1229,7 @@ class WorkerPostgresTests(unittest.TestCase):
                 "- Assunto: Misto\n"
                 "- Números das notas:\n"
                 "  • 0010.09 (ATACADÃO DO SOFÁ - IRECÊ)\n"
-                "  • 0010.15 (ATACADÃO DO SOFÁ - COITÉ)\n\n"
+                "  • 0010.26 (BARATÃO DOS MÓVEIS - SAJ (FEIRÃO))\n\n"
                 + relato
             ))
 
@@ -1243,7 +1243,7 @@ class WorkerPostgresTests(unittest.TestCase):
         self.ciclo()
         self.assertEqual(self.conversa()[:3], (6, 0, True))
         self.assertEqual(self.adm.execute("""
-            SELECT detalhes, encaminhado_sofas, encaminhado_moveis FROM chatbot.atendimento_pos_venda
+            SELECT detalhes, encaminhado_atacadao, encaminhado_baratao FROM chatbot.atendimento_pos_venda
         """).fetchone(), (None, None, None))
         self.assertEqual(self.adm.execute("""
             SELECT count(*) FROM chatbot.historico_mensagens WHERE id_mensagem_fila=%s AND quem_enviou='bot'
@@ -1262,10 +1262,42 @@ class WorkerPostgresTests(unittest.TestCase):
             WHERE quem_enviou='bot' ORDER BY id_mensagem DESC LIMIT 1
         """).fetchone()
         self.assertNotIn("avaria", texto)
-        resumo = parse_qs(urlsplit(interativo["action"]["parameters"]["url"]).query)["text"][0]
-        self.assertEqual(len(resumo.split("\n\n")), 2)
-        self.assertTrue(resumo.endswith("- Assunto: Entrega\n- Número da nota: Perdi a nota"))
-        self.assertNotIn("5511999990000", resumo)
+        cartoes = interativo["action"]["cards"]
+        self.assertEqual(len(cartoes), 2)
+        for cartao in cartoes:
+            resumo = parse_qs(urlsplit(cartao["action"]["parameters"]["url"]).query)["text"][0]
+            self.assertEqual(len(resumo.split("\n\n")), 2)
+            self.assertTrue(resumo.endswith("- Assunto: Entrega\n- Número da nota: Perdi a nota"))
+            self.assertNotIn("5511999990000", resumo)
+
+    def conferir_encaminhamento_uma_rede(self, notas, resposta, rede, numero):
+        self.preparar_pedidos("entrega")
+        for texto in (notas, resposta):
+            self.fila(texto)
+            self.ciclo()
+        self.assertEqual(self.conversa()[:3], (7, 0, False))
+        self.wa.send_carousel.assert_not_called()
+        interativo = self.adm.execute("""
+            SELECT interativo FROM chatbot.historico_mensagens WHERE quem_enviou='bot'
+            ORDER BY id_mensagem DESC LIMIT 1
+        """).fetchone()[0]
+        self.assertEqual(interativo["type"], "cta_url")
+        self.assertNotIn("header", interativo)
+        parametros = interativo["action"]["parameters"]
+        self.assertEqual(parametros["display_text"], "Pós-venda " + rede)
+        self.assertIn("wa.me/" + numero + "?", parametros["url"])
+        destinos = self.adm.execute("""
+            SELECT encaminhado_atacadao, encaminhado_baratao FROM chatbot.atendimento_pos_venda
+        """).fetchone()
+        self.assertEqual(destinos, (numero, None) if rede == "Atacadão" else (None, numero))
+
+    def test_notas_sfb_e_deposito_encaminham_ao_baratao(self):
+        self.conferir_encaminhamento_uma_rede("100.01 e 200.05", "Minha entrega atrasou.",
+                                             "Baratão", "557582467000")
+
+    def test_universal_depois_de_notas_do_atacadao_encaminha_apenas_ao_atacadao(self):
+        self.conferir_encaminhamento_uma_rede("100.09 e 200.15", "Quero um humano",
+                                             "Atacadão", "557592087803")
 
     def test_migracao_sete_etapas_reapresenta_pergunta_e_respeita_visita_antiga(self):
         from core.integrations.whatsapp.messages.etapa6_detalhes_messages import MENSAGEM_DETALHES
@@ -1343,7 +1375,7 @@ class WorkerPostgresTests(unittest.TestCase):
         self.wa.send_message.assert_not_called()
         self.assertEqual(self.adm.execute("SELECT status FROM chatbot.fila_mensagens ORDER BY id_mensagem DESC LIMIT 1").fetchone()[0], "sent")
 
-    def test_quarto_turno_na_lista_encaminha_apenas_estofados_e_bloqueia(self):
+    def test_quarto_turno_na_lista_encaminha_ambas_redes_e_bloqueia(self):
         self.preparar_assunto("Apenas Estofados")
         for turno in range(1, 4):
             self.fila("?", "text")
@@ -1353,8 +1385,8 @@ class WorkerPostgresTests(unittest.TestCase):
         self.ciclo()
         self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_sem_avanco"))
         self.assertEqual(self.adm.execute("""
-            SELECT assunto, encaminhado_moveis, encaminhado_sofas FROM chatbot.atendimento_pos_venda
-        """).fetchone(), (None, None, "557592087803"))
+            SELECT assunto, encaminhado_baratao, encaminhado_atacadao FROM chatbot.atendimento_pos_venda
+        """).fetchone(), (None, "557582467000", "557592087803"))
         self.assertEqual(self.cache.call_args.args[1]["bloqueio_dias"], 90)
 
     def test_produto_quarta_entrada_encaminha_sem_salvar_escolha(self):
@@ -1379,7 +1411,7 @@ class WorkerPostgresTests(unittest.TestCase):
         self.ciclo()
         self.assertEqual(self.conversa()[:3], (4, 0, True))
         self.assertEqual(self.adm.execute("""
-            SELECT produto,encaminhado_sofas,encaminhado_moveis FROM chatbot.atendimento_pos_venda
+            SELECT produto,encaminhado_atacadao,encaminhado_baratao FROM chatbot.atendimento_pos_venda
         """).fetchone(), ("moveis", None, None))
 
     def test_produto_queda_antes_commit_reverte_dado_etapa_e_resposta(self):

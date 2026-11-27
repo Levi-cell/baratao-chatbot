@@ -11,7 +11,7 @@ from core.integrations.whatsapp.messages.etapa1_messages import (
     MENSAGEM_PADRAO_ETAPA1, MENSAGEM_NOME_INVALIDO,
 )
 from core.integrations.whatsapp.messages.encaminhamento_pos_venda import (
-    MENSAGEM_AMBOS_PRODUTOS, MENSAGEM_PRODUTO_NAO_INFORMADO,
+    MENSAGEM_SEM_NOTA,
 )
 from core.integrations.whatsapp.exceptions import ErroEnvioMeta
 from core.integrations.whatsapp.pywa_functions.pywa_senders.encaminhamento_pos_venda import montar_cartoes
@@ -33,7 +33,7 @@ def contexto(etapa=1, texto="123", tipo="text", turnos=0, apresentacao=False):
             "nome_valido_falta_cpf": 2,
             "humano_solicitado": 7, "limite_sem_avanco": 7,
         },
-        "central": {"telefone_sofas": "557592087803", "telefone_moveis": "557582467000",
+        "central": {"telefone_atacadao": "557592087803", "telefone_baratao": "557582467000",
                     "phone_number_id": "999", "messaging_account_id": "100", "waac_id": None},
         "cadastro": {},
         "mensagem_cliente_atual": {"tipo_mensagem": tipo, "conteudo_texto": texto,
@@ -97,7 +97,7 @@ class Etapa1Tests(unittest.TestCase):
         envio = flow_sender(contexto(turnos=3))
         self.assertEqual(envio["evento_transicao"], "limite_sem_avanco")
         self.assertEqual(envio["id_etapa_resultante"], 7)
-        self.assertEqual(envio["mensagem_bot"], MENSAGEM_PRODUTO_NAO_INFORMADO)
+        self.assertEqual(envio["mensagem_bot"], MENSAGEM_SEM_NOTA)
         self.wa.send_carousel.assert_called_once()
 
     def test_nome_valido_avanca_para_cpf(self):
@@ -121,12 +121,12 @@ class Etapa1Tests(unittest.TestCase):
                         self.assertEqual(interativo["type"], {3:"button", 4:"list", 5:"button"}[etapa])
         self.wa.send_carousel.assert_not_called()
 
-    def test_midia_apos_escolher_ambos_usa_mensagem_dos_dois_produtos(self):
+    def test_quarto_erro_sem_nota_oferece_as_duas_redes(self):
         c = contexto(etapa=4, tipo="audio", texto=None, turnos=3)
         c["produto"] = "ambos"
         envio = flow_sender(c)
         self.assertEqual(envio["evento_transicao"], "limite_sem_avanco")
-        self.assertEqual(envio["mensagem_bot"], MENSAGEM_AMBOS_PRODUTOS)
+        self.assertEqual(envio["mensagem_bot"], MENSAGEM_SEM_NOTA)
 
     def test_humano_em_qualquer_frase_sem_diferenciar_caixa(self):
         for texto in ("Humano", "Quero falar com um HUMANO, por favor", "tem atendimento humano?"):
@@ -143,8 +143,8 @@ class Etapa1Tests(unittest.TestCase):
         cards = [c.to_dict(i) for i, c in enumerate(montar_cartoes(contexto()))]
         self.assertEqual(len(cards), 2)
         for i, (rotulo, numero, imagem) in enumerate((
-            ("Pós-venda Estofados", "557592087803", "estofados.png"),
-            ("Pós-venda Móveis", "557582467000", "moveis.png"),
+            ("Pós-venda Atacadão", "557592087803", "estofados.png"),
+            ("Pós-venda Baratão", "557582467000", "moveis.png"),
         )):
             card = cards[i]
             self.assertEqual(card["card_index"], i)
@@ -160,7 +160,7 @@ class Etapa1Tests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     flow_sender(contexto(tipo="audio", turnos=3))
         c = contexto(tipo="audio", turnos=3)
-        c["central"]["telefone_sofas"] = None
+        c["central"]["telefone_atacadao"] = None
         with self.assertRaises(ValueError):
             flow_sender(c)
         self.wa.send_carousel.assert_not_called()
@@ -259,7 +259,7 @@ class TransporteTests(unittest.TestCase):
                 "messages": [{"id": "wamid.simulado"}]})
         with patch.dict(os.environ, ENV), httpx.Client(transport=httpx.MockTransport(responder)) as session:
             wa = WhatsApp(phone_id="999", token="token-falso", session=session)
-            resposta = wa.send_carousel(to="5511999990000", body=MENSAGEM_PRODUTO_NAO_INFORMADO, cards=montar_cartoes(contexto()))
+            resposta = wa.send_carousel(to="5511999990000", body=MENSAGEM_SEM_NOTA, cards=montar_cartoes(contexto()))
         self.assertEqual(resposta.id, "wamid.simulado")
         self.assertEqual(len(capturados), 1)
         payload = capturados[0]

@@ -25,11 +25,11 @@ class CentralPosVenda(models.Model):
         help_text="Informe o ID de conta verificado para este número. Em branco, o envio usa o Phone Number ID.",
     )
     telefone = models.CharField("telefone da central", unique=True)
-    telefone_moveis = models.CharField(
-        "telefone de móveis", blank=True, null=True, validators=[validar_telefone_setor],
+    telefone_baratao = models.CharField(
+        "telefone do pós-venda do Baratão", blank=True, null=True, validators=[validar_telefone_setor],
     )
-    telefone_sofas = models.CharField(
-        "telefone de sofás", blank=True, null=True, validators=[validar_telefone_setor],
+    telefone_atacadao = models.CharField(
+        "telefone do pós-venda do Atacadão", blank=True, null=True, validators=[validar_telefone_setor],
     )
     id_fuso = models.IntegerField("ID do fuso", blank=True, null=True, editable=False)
     nome_fuso = models.TextField("nome do fuso", blank=True, null=True, editable=False)
@@ -41,11 +41,11 @@ class CentralPosVenda(models.Model):
         if self.waac_id and self.waac_id == self.phone_number_id:
             erros["waac_id"] = "O WAAC ID deve ser diferente do Phone Number ID."
         if self.ativa:
-            for campo in ("telefone_moveis", "telefone_sofas"):
+            for campo in ("telefone_baratao", "telefone_atacadao"):
                 if not getattr(self, campo):
-                    erros[campo] = "Informe o telefone do setor para ativar a central."
-        if self.telefone_moveis and self.telefone_moveis == self.telefone_sofas:
-            erros["telefone_sofas"] = "Informe números diferentes para móveis e sofás."
+                    erros[campo] = "Informe o telefone desta rede para ativar a central."
+        if self.telefone_baratao and self.telefone_baratao == self.telefone_atacadao:
+            erros["telefone_atacadao"] = "Informe números diferentes para o Baratão e o Atacadão."
         if erros:
             raise ValidationError(erros)
 
@@ -162,8 +162,8 @@ class AtendimentoPosVenda(models.Model):
     perdeu_nota = models.BooleanField(null=True)
     foi_a_loja = models.BooleanField(null=True)
     detalhes = models.TextField(null=True)
-    encaminhado_moveis = models.CharField(null=True)
-    encaminhado_sofas = models.CharField(null=True)
+    encaminhado_baratao = models.CharField(null=True)
+    encaminhado_atacadao = models.CharField(null=True)
     telefone_compartilhado = models.CharField(null=True, editable=False)
 
     class Meta:
@@ -175,6 +175,8 @@ class AtendimentoPosVenda(models.Model):
 class FilialCompra(models.Model):
     codigo = models.TextField(primary_key=True)
     nome = models.TextField()
+
+    grupo = models.TextField(choices=[("Atacadão", "Atacadão"), ("Baratão", "Baratão")])
 
     def __str__(self):
         return f"{self.codigo} · {self.nome}"

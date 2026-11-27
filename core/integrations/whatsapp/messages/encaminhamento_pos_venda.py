@@ -2,26 +2,26 @@
 
 from core.integrations.whatsapp.pywa_functions.saudacao import obter_saudacao_por_horario
 
-MENSAGEM_PRODUTO_NAO_INFORMADO = (
-    "Como não consegui identificar se sua compra foi de estofados ou de móveis, "
-    "vou te passar o contato de cada setor.\n\n"
-    "Deslize para o lado para ver as duas opções, caso tenha comprado tanto móveis e estofados, "
-    "selecione a opção para o caso que deseja resolver primeiro."
-)
-MENSAGEM_AMBOS_PRODUTOS = (
-    "Como você comprou tanto estofados quanto móveis, vou te passar os contatos "
-    "dos dois setores de pós-venda.\n\n"
-    "Deslize para o lado para ver a outra opção, e selecione a opção que quer resolver primeiro."
-)
-ROTULO_ESTOFADOS = "Pós-venda Estofados"
-ROTULO_MOVEIS = "Pós-venda Móveis"
-MENSAGEM_POR_SETOR = {
-    "sofas": "Para falar sobre seus estofados, toque abaixo.",
-    "moveis": "Para falar sobre seus móveis, toque abaixo.",
+ROTULOS_POS_VENDA = {
+    "atacadao": "Pós-venda Atacadão",
+    "baratao": "Pós-venda Baratão",
 }
-
-
-MENSAGEM_FINAL = "Obrigado pelas informações. Use o botão abaixo para falar com o pós-venda."
+MENSAGEM_POR_GRUPO = {
+    "atacadao": "Sua compra é do Atacadão. Toque no botão abaixo para falar com o pós-venda do Atacadão.",
+    "baratao": "Sua compra é do Baratão. Toque no botão abaixo para falar com o pós-venda do Baratão.",
+}
+MENSAGEM_SEM_NOTA = (
+    "Vou te passar os contatos do pós-venda do Atacadão e do Baratão. "
+    "Deslize para o lado e toque no botão da rede onde você fez a compra."
+)
+MENSAGEM_NOTA_PERDIDA = (
+    "Tudo bem se você perdeu a nota. Deslize para o lado para ver os dois contatos "
+    "e toque no pós-venda da rede onde você fez a compra: Atacadão ou Baratão."
+)
+MENSAGEM_DUAS_REDES = (
+    "Suas notas são de compras no Atacadão e no Baratão. "
+    "Deslize para o lado e escolha o pós-venda da rede com que deseja falar primeiro."
+)
 AVISO_ASSISTENCIA = (
     "Olha, vale lembra que em caso de avarias, o protocolo é tirar fotos e vídeos e ir pessoalmente à loja "
     "em que realizou a compra para abrir um chamado. Lembrando que a garantia é de 90 dias "

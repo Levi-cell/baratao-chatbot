@@ -4,7 +4,7 @@ Sistema de atendimento automatizado de pós-venda pelo WhatsApp, desenvolvido pa
 
 O projeto utiliza um fluxo determinístico, com etapas e transições controladas pelo banco de dados, processamento assíncrono de mensagens e persistência do histórico de atendimento. Também possui uma interface web de monitoramento e um componente independente de acompanhamento do consumo da API da Meta.
 
-**Beta V0.3.0.** O webhook e os dois workers rodam na VM Ubuntu. O atendimento tem sete etapas. O Django Admin permite administrar centrais e consultar fila, histórico e transições. O portal dos operadores exibe o consumo por central e mês. Parte das métricas herdadas ainda requer adaptação ao varejo. [Admin e painel](callback/README.md#admin-e-painel)
+**Beta V0.4.0.** O webhook e os dois workers rodam na VM Ubuntu. O atendimento tem sete etapas. O Django Admin permite administrar centrais e consultar fila, histórico e transições. O portal dos operadores exibe o consumo por central e mês. Parte das métricas herdadas ainda requer adaptação ao varejo. [Admin e painel](callback/README.md#admin-e-painel)
 
 ## Objetivos
 
@@ -57,7 +57,7 @@ Com as notas confirmadas ou perdidas, todos seguem para o relato (6) e o encamin
 
 Após a apresentação, uma mídia repete a pergunta com o aviso de texto. A quarta resposta consecutiva inválida ou um pedido textual de humano encaminha. Uma resposta válida avança e zera o contador, inclusive após três correções.
 
-O encaminhamento apresenta os contatos de pós-venda conforme o produto escolhido. Com ambos ou sem produto definido, uma única mensagem apresenta os dois cartões com foto e botão. Os dados disponíveis da conversa podem compor o resumo encaminhado no link do WhatsApp.
+O Theo identifica a rede pelo sufixo de cada nota aceita nesta conversa. Se todas pertencem à mesma rede, envia o botão daquela rede. Com notas de ambas, nota perdida ou encaminhamento antes de informar uma nota, envia um carrossel com os dois contatos. Cada botão abre o WhatsApp com o resumo já coletado.
 
 Após a confirmação do encaminhamento, o fluxo registra o encerramento e aplica um bloqueio interno de 90 dias por cliente e central. Esse bloqueio não equivale a um bloqueio na plataforma WhatsApp.
 

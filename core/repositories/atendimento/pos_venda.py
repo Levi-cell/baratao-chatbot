@@ -37,12 +37,12 @@ def atualizar_cpf_do_atendimento(id_conversa, cpf_titular, cursor):
         raise ValueError("Atendimento ausente ao confirmar CPF.")
 
 
-def registrar_contatos_encaminhados(id_conversa, telefone_moveis, telefone_sofas, cursor):
+def registrar_contatos_encaminhados(id_conversa, telefone_baratao, telefone_atacadao, cursor):
     cursor.execute("""
         UPDATE chatbot.atendimento_pos_venda
-        SET encaminhado_moveis = %s, encaminhado_sofas = %s
+        SET encaminhado_baratao = %s, encaminhado_atacadao = %s
         WHERE id_conversa = %s;
-    """, (telefone_moveis, telefone_sofas, id_conversa))
+    """, (telefone_baratao, telefone_atacadao, id_conversa))
     if cursor.rowcount != 1:
         raise ValueError("Atendimento ausente ao confirmar contatos.")
 

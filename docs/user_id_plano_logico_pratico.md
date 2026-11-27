@@ -1,6 +1,6 @@
 # Identidade WhatsApp do cliente e da central no Baratão
 
-**Beta V0.3.0.** Cada passo reproduz o arquivo completo da versão que concilia os cadastros na etapa de CPF. As tabelas de negócio são geridas pelo DDL. Em uma base já na V0.2.1, aplicar apenas o [SQL incremental da conferência de CPF](../deploy/migrations/20261127_contato_conferencia_cpf.sql) antes de iniciar o código novo. [Regra de conciliação](user_id_plano_logico_teorico.md#conciliação-do-cliente-provisório)
+**Beta V0.4.0.** Cada passo reproduz o arquivo completo indicado. Na atualização da V0.2.1, aplicar primeiro a [migração de CPF](../deploy/migrations/20261127_contato_conferencia_cpf.sql). Da V0.3.0, aplicar a [migração das redes](../deploy/migrations/20261127_encaminhamento_por_rede.sql). A identidade escolhe o destinatário das respostas do Theo. A rede das notas escolhe qual contato humano aparecerá no encaminhamento.
 
 ## Como usar este plano em outro ambiente
 
@@ -35,10 +35,10 @@ CREATE TABLE chatbot.central_pos_venda (
     -- Preencher somente com o ID de conta WhatsApp verificado para este número.
     waac_id varchar UNIQUE CHECK (waac_id ~ '^[1-9][0-9]*$' AND waac_id <> phone_number_id),
     telefone varchar NOT NULL UNIQUE,
-    telefone_moveis varchar CHECK (telefone_moveis ~ '^[1-9][0-9]{7,14}$'),
-    telefone_sofas varchar CHECK (telefone_sofas ~ '^[1-9][0-9]{7,14}$'),
-    CHECK (NOT ativa OR (telefone_moveis IS NOT NULL AND telefone_sofas IS NOT NULL)),
-    CHECK (telefone_moveis <> telefone_sofas)
+    telefone_baratao varchar CHECK (telefone_baratao ~ '^[1-9][0-9]{7,14}$'),
+    telefone_atacadao varchar CHECK (telefone_atacadao ~ '^[1-9][0-9]{7,14}$'),
+    CHECK (NOT ativa OR (telefone_baratao IS NOT NULL AND telefone_atacadao IS NOT NULL)),
+    CHECK (telefone_baratao <> telefone_atacadao)
 );
 
 CREATE TABLE chatbot.cliente (
@@ -134,15 +134,10 @@ CREATE TABLE chatbot.atendimento_pos_venda (
     perdeu_nota boolean,
     foi_a_loja boolean,
     detalhes text CHECK (btrim(detalhes) <> ''),
-    encaminhado_moveis varchar CHECK (encaminhado_moveis ~ '^[1-9][0-9]{7,14}$'),
-    encaminhado_sofas varchar CHECK (encaminhado_sofas ~ '^[1-9][0-9]{7,14}$'),
+    encaminhado_baratao varchar CHECK (encaminhado_baratao ~ '^[1-9][0-9]{7,14}$'),
+    encaminhado_atacadao varchar CHECK (encaminhado_atacadao ~ '^[1-9][0-9]{7,14}$'),
     telefone_compartilhado varchar CHECK (telefone_compartilhado ~ '^[1-9][0-9]{0,14}$'),
-    CHECK (encaminhado_moveis <> encaminhado_sofas),
-    CHECK (CASE coalesce(produto, 'ambos')
-        WHEN 'moveis' THEN encaminhado_sofas IS NULL
-        WHEN 'estofados' THEN encaminhado_moveis IS NULL
-        ELSE (encaminhado_moveis IS NULL) = (encaminhado_sofas IS NULL)
-    END),
+    CHECK (encaminhado_baratao <> encaminhado_atacadao),
     CHECK (foi_a_loja IS NULL OR assunto IS NOT DISTINCT FROM 'assistencia')
 );
 
@@ -154,7 +149,8 @@ CREATE TABLE chatbot.etiqueta_conversa (
 
 CREATE TABLE chatbot.filial_compra (
     codigo text PRIMARY KEY CHECK (codigo ~ '^[0-9]{2}$'),
-    nome text NOT NULL CHECK (btrim(nome) <> '')
+    nome text NOT NULL CHECK (btrim(nome) <> ''),
+    grupo text NOT NULL CHECK (grupo IN ('Atacadão','Baratão'))
 );
 
 CREATE TABLE chatbot.pedido_conversa (
@@ -2912,7 +2908,7 @@ def enviar_solicitacao(bsuid, phone_id, texto, etapa):
 ## 19. `core/integrations/whatsapp/pywa_functions/pywa_senders/encaminhamento_pos_venda.py` (alterar)
 
 ```python
-"""Um contato para o produto escolhido ou o carrossel para os dois setores."""
+"""Encaminhamento por rede das filiais das notas desta conversa."""
 
 import os
 import re
@@ -2923,12 +2919,12 @@ from pywa.types import ImageCarouselCard, URLButton
 from core.integrations.whatsapp.exceptions import ErroEnvioMeta
 from core.etapas_pos_venda import ETAPA_ENCAMINHAMENTO, EVENTO_SITUACAO_INFORMADA
 from core.integrations.whatsapp.messages.encaminhamento_pos_venda import (
-    MENSAGEM_AMBOS_PRODUTOS, MENSAGEM_PRODUTO_NAO_INFORMADO, MENSAGEM_POR_SETOR,
-    MENSAGEM_FINAL, ROTULO_ESTOFADOS, ROTULO_MOVEIS, mensagem_de_contato, montar_resumo_encaminhamento,
+    MENSAGEM_DUAS_REDES, MENSAGEM_SEM_NOTA, MENSAGEM_NOTA_PERDIDA, MENSAGEM_POR_GRUPO,
+    ROTULOS_POS_VENDA, mensagem_de_contato, montar_resumo_encaminhamento,
 )
 from core.integrations.whatsapp.pywa_functions.cliente import conta_wa
 from core.integrations.whatsapp.pywa_functions.resposta_envio import extrair_id_hash_msg_bot
-from core.validacoes.encaminhamento_pos_venda import setores_encaminhamento
+from core.validacoes.encaminhamento_pos_venda import grupos_encaminhamento
 from .texto_pos_venda import enviar_texto_pos_venda
 
 
@@ -2940,12 +2936,12 @@ def _resumo_do_atendimento(contexto):
     )
 
 
-def _botao_contato(central, setor, resumo):
-    numero = central.get(f"telefone_{setor}")
+def _botao_contato(central, grupo, resumo):
+    numero = central.get(f"telefone_{grupo}")
     if not re.fullmatch(r"[1-9][0-9]{7,14}", str(numero or "")):
         raise ValueError("Telefone de pós-venda inválido.")
     return URLButton(
-        title=ROTULO_ESTOFADOS if setor == "sofas" else ROTULO_MOVEIS,
+        title=ROTULOS_POS_VENDA[grupo],
         url=f"https://wa.me/{numero}?text={quote(resumo, safe='')}",
     )
 
@@ -2956,15 +2952,15 @@ def montar_cartoes(contexto):
     url = urlsplit(base)
     if url.scheme != "https" or not url.netloc or url.query or url.fragment or url.username:
         raise ValueError("Configure WHATSAPP_MIDIAS_BASE_URL com a URL HTTPS pública das imagens.")
-    if central.get("telefone_sofas") == central.get("telefone_moveis"):
+    if central.get("telefone_atacadao") == central.get("telefone_baratao"):
         raise ValueError("A central precisa dos dois contatos distintos de pós-venda.")
     resumo = _resumo_do_atendimento(contexto)
     return [
         ImageCarouselCard(
             image=f"{base}/{arquivo}.png",
-            buttons=_botao_contato(central, setor, resumo),
+            buttons=_botao_contato(central, grupo, resumo),
         )
-        for arquivo, setor in (("estofados", "sofas"), ("moveis", "moveis"))
+        for arquivo, grupo in (("estofados", "atacadao"), ("moveis", "baratao"))
     ]
 
 
@@ -2972,21 +2968,26 @@ def enviar_encaminhamento(contexto, evento):
     mensagem = contexto["mensagem_cliente_atual"]
     phone = mensagem["id_phone_unidade"]
     telefone = contexto.get("destinatario_envio", mensagem.get("cliente_telefone"))
-    setores = setores_encaminhamento(contexto.get("produto"))
+    grupos = grupos_encaminhamento(contexto)
     conclusao = evento == EVENTO_SITUACAO_INFORMADA
-    if len(setores) == 1:
-        setor = setores[0]
-        texto = MENSAGEM_FINAL if conclusao else MENSAGEM_POR_SETOR[setor]
+    if len(grupos) == 1:
+        grupo = grupos[0]
+        texto = MENSAGEM_POR_GRUPO[grupo]
         envio = enviar_texto_pos_venda(
             telefone, phone, mensagem_de_contato(texto, contexto.get("assunto")),
-            ETAPA_ENCAMINHAMENTO, botoes=_botao_contato(contexto["central"], setor, _resumo_do_atendimento(contexto)),
+            ETAPA_ENCAMINHAMENTO, botoes=_botao_contato(contexto["central"], grupo, _resumo_do_atendimento(contexto)),
         )
         if not conclusao:
             envio["tipo_tratamento"] = evento
-        envio[f"encaminhado_{setor}"] = contexto["central"][f"telefone_{setor}"]
+        envio[f"encaminhado_{grupo}"] = contexto["central"][f"telefone_{grupo}"]
         return envio
 
-    texto = MENSAGEM_AMBOS_PRODUTOS if contexto.get("produto") == "ambos" else MENSAGEM_PRODUTO_NAO_INFORMADO
+    if contexto.get("perdeu_nota"):
+        texto = MENSAGEM_NOTA_PERDIDA
+    elif contexto.get("grupos_das_notas"):
+        texto = MENSAGEM_DUAS_REDES
+    else:
+        texto = MENSAGEM_SEM_NOTA
     texto = mensagem_de_contato(texto, contexto.get("assunto"))
     cartoes = montar_cartoes(contexto)
     try:
@@ -3003,8 +3004,8 @@ def enviar_encaminhamento(contexto, evento):
         "interativo": {"type": "carousel", "body": {"text": texto},
                        "action": {"cards": [card.to_dict(i) for i, card in enumerate(cartoes)]}},
         "id_etapa_resultante": ETAPA_ENCAMINHAMENTO,
-        "encaminhado_sofas": contexto["central"]["telefone_sofas"],
-        "encaminhado_moveis": contexto["central"]["telefone_moveis"],
+        "encaminhado_atacadao": contexto["central"]["telefone_atacadao"],
+        "encaminhado_baratao": contexto["central"]["telefone_baratao"],
     }
     if not conclusao:
         envio["tipo_tratamento"] = evento
@@ -3433,7 +3434,7 @@ from core.etapas_pos_venda import ETAPA_DETALHES, ETAPA_PEDIDOS, ETAPA_PRODUTO
 
 def buscar_contexto_pos_venda(id_conversa, cursor):
     cursor.execute("""
-        SELECT b.telefone_sofas, b.telefone_moveis, a.nome_titular,
+        SELECT b.telefone_atacadao, b.telefone_baratao, a.nome_titular,
                a.cpf_titular, a.cidade_loja_compra,
                (ultima.id_mensagem IS NULL OR
                 (c.id_etapa_atual = %s AND
@@ -3442,7 +3443,7 @@ def buscar_contexto_pos_venda(id_conversa, cursor):
                a.produto, a.assunto::text,
                CASE WHEN c.id_etapa_atual = %s THEN ARRAY(SELECT codigo FROM chatbot.filial_compra) END,
                b.phone_number_id, b.waba_id AS messaging_account_id, b.waac_id,
-               ARRAY(SELECT ARRAY[p.numero, f.nome] FROM chatbot.pedido_conversa p
+               ARRAY(SELECT ARRAY[p.numero, f.nome, f.grupo] FROM chatbot.pedido_conversa p
                      LEFT JOIN chatbot.filial_compra f ON f.codigo = p.codigo_filial
                      WHERE p.id_conversa = c.id_conversa ORDER BY p.numero),
                a.perdeu_nota, a.detalhes, a.telefone_compartilhado
@@ -3468,7 +3469,7 @@ def buscar_contexto_pos_venda(id_conversa, cursor):
         "solicitacao_contato": {"motivo": motivo, "etapa": etapa, "wamids": wamids, "erros": erros}
                               if motivo else None,
         "central": {
-            "telefone_sofas": row[0], "telefone_moveis": row[1],
+            "telefone_atacadao": row[0], "telefone_baratao": row[1],
             "phone_number_id": row[9], "messaging_account_id": row[10], "waac_id": row[11],
         },
         "cadastro": dict(zip(
@@ -3477,7 +3478,8 @@ def buscar_contexto_pos_venda(id_conversa, cursor):
         "apresentacao_pendente": bool(row[5]),
         "produto": row[6],
         "assunto": row[7],
-        "pedidos_com_filial": row[12],
+        "pedidos_com_filial": [(numero, filial) for numero, filial, _ in row[12]],
+        "grupos_das_notas": frozenset(grupo for _, _, grupo in row[12]),
         "telefone_compartilhado": row[15],
         "perdeu_nota": row[13],
         "detalhes": row[14],
@@ -5085,13 +5087,13 @@ from core.repositories.atendimento.pos_venda import (
     atualizar_assunto_do_atendimento, registrar_detalhes,
 )
 from core.validacoes.assunto_pos_venda import ASSUNTOS
-from core.validacoes.encaminhamento_pos_venda import setores_encaminhamento
+from core.validacoes.encaminhamento_pos_venda import grupos_encaminhamento
 from core.validacoes.produto_pos_venda import PRODUTOS
 from core.validacoes.pedidos_pos_venda import pedidos_de_filiais_cadastradas, transicao_dos_pedidos
 from core.repositories.atendimento.pedidos import inserir_pedidos_da_conversa, registrar_situacao_nota
 
 _CAMPOS_EFEITO = frozenset({
-    "nome_titular", "cpf_titular", "produto", "assunto", "encaminhado_moveis", "encaminhado_sofas",
+    "nome_titular", "cpf_titular", "produto", "assunto", "encaminhado_baratao", "encaminhado_atacadao",
     "numeros_pedido", "detalhes",
 })
 
@@ -5116,16 +5118,16 @@ def _validar_destino(contexto, envio, destino_esperado):
 
 
 def _registrar_encaminhamento(contexto, envio, cursor):
-    """O efeito exige os contatos dos setores definidos para este atendimento."""
+    """O efeito exige os contatos das redes identificadas para este atendimento."""
     _validar_destino(contexto, envio, ETAPA_ENCAMINHAMENTO)
-    setores = setores_encaminhamento(contexto.get("produto"))
-    campos = {f"encaminhado_{setor}" for setor in setores}
+    grupos = grupos_encaminhamento(contexto)
+    campos = {f"encaminhado_{grupo}" for grupo in grupos}
     if envio["evento_transicao"] == EVENTO_SITUACAO_INFORMADA:
         campos.add("detalhes")
     _validar_campos_efeito(envio, campos)
     registrar_contatos_encaminhados(
-        contexto["id_conversa"], envio.get("encaminhado_moveis"),
-        envio.get("encaminhado_sofas"), cursor,
+        contexto["id_conversa"], envio.get("encaminhado_baratao"),
+        envio.get("encaminhado_atacadao"), cursor,
     )
     return {"encaminhado": True}
 
@@ -5581,7 +5583,7 @@ from core.integrations.whatsapp.messages.etapa1_messages import (
     MENSAGEM_PADRAO_ETAPA1, MENSAGEM_NOME_INVALIDO,
 )
 from core.integrations.whatsapp.messages.encaminhamento_pos_venda import (
-    MENSAGEM_AMBOS_PRODUTOS, MENSAGEM_PRODUTO_NAO_INFORMADO,
+    MENSAGEM_SEM_NOTA,
 )
 from core.integrations.whatsapp.exceptions import ErroEnvioMeta
 from core.integrations.whatsapp.pywa_functions.pywa_senders.encaminhamento_pos_venda import montar_cartoes
@@ -5603,7 +5605,7 @@ def contexto(etapa=1, texto="123", tipo="text", turnos=0, apresentacao=False):
             "nome_valido_falta_cpf": 2,
             "humano_solicitado": 7, "limite_sem_avanco": 7,
         },
-        "central": {"telefone_sofas": "557592087803", "telefone_moveis": "557582467000",
+        "central": {"telefone_atacadao": "557592087803", "telefone_baratao": "557582467000",
                     "phone_number_id": "999", "messaging_account_id": "100", "waac_id": None},
         "cadastro": {},
         "mensagem_cliente_atual": {"tipo_mensagem": tipo, "conteudo_texto": texto,
@@ -5667,7 +5669,7 @@ class Etapa1Tests(unittest.TestCase):
         envio = flow_sender(contexto(turnos=3))
         self.assertEqual(envio["evento_transicao"], "limite_sem_avanco")
         self.assertEqual(envio["id_etapa_resultante"], 7)
-        self.assertEqual(envio["mensagem_bot"], MENSAGEM_PRODUTO_NAO_INFORMADO)
+        self.assertEqual(envio["mensagem_bot"], MENSAGEM_SEM_NOTA)
         self.wa.send_carousel.assert_called_once()
 
     def test_nome_valido_avanca_para_cpf(self):
@@ -5691,12 +5693,12 @@ class Etapa1Tests(unittest.TestCase):
                         self.assertEqual(interativo["type"], {3:"button", 4:"list", 5:"button"}[etapa])
         self.wa.send_carousel.assert_not_called()
 
-    def test_midia_apos_escolher_ambos_usa_mensagem_dos_dois_produtos(self):
+    def test_quarto_erro_sem_nota_oferece_as_duas_redes(self):
         c = contexto(etapa=4, tipo="audio", texto=None, turnos=3)
         c["produto"] = "ambos"
         envio = flow_sender(c)
         self.assertEqual(envio["evento_transicao"], "limite_sem_avanco")
-        self.assertEqual(envio["mensagem_bot"], MENSAGEM_AMBOS_PRODUTOS)
+        self.assertEqual(envio["mensagem_bot"], MENSAGEM_SEM_NOTA)
 
     def test_humano_em_qualquer_frase_sem_diferenciar_caixa(self):
         for texto in ("Humano", "Quero falar com um HUMANO, por favor", "tem atendimento humano?"):
@@ -5713,8 +5715,8 @@ class Etapa1Tests(unittest.TestCase):
         cards = [c.to_dict(i) for i, c in enumerate(montar_cartoes(contexto()))]
         self.assertEqual(len(cards), 2)
         for i, (rotulo, numero, imagem) in enumerate((
-            ("Pós-venda Estofados", "557592087803", "estofados.png"),
-            ("Pós-venda Móveis", "557582467000", "moveis.png"),
+            ("Pós-venda Atacadão", "557592087803", "estofados.png"),
+            ("Pós-venda Baratão", "557582467000", "moveis.png"),
         )):
             card = cards[i]
             self.assertEqual(card["card_index"], i)
@@ -5730,7 +5732,7 @@ class Etapa1Tests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     flow_sender(contexto(tipo="audio", turnos=3))
         c = contexto(tipo="audio", turnos=3)
-        c["central"]["telefone_sofas"] = None
+        c["central"]["telefone_atacadao"] = None
         with self.assertRaises(ValueError):
             flow_sender(c)
         self.wa.send_carousel.assert_not_called()
@@ -5829,7 +5831,7 @@ class TransporteTests(unittest.TestCase):
                 "messages": [{"id": "wamid.simulado"}]})
         with patch.dict(os.environ, ENV), httpx.Client(transport=httpx.MockTransport(responder)) as session:
             wa = WhatsApp(phone_id="999", token="token-falso", session=session)
-            resposta = wa.send_carousel(to="5511999990000", body=MENSAGEM_PRODUTO_NAO_INFORMADO, cards=montar_cartoes(contexto()))
+            resposta = wa.send_carousel(to="5511999990000", body=MENSAGEM_SEM_NOTA, cards=montar_cartoes(contexto()))
         self.assertEqual(resposta.id, "wamid.simulado")
         self.assertEqual(len(capturados), 1)
         payload = capturados[0]
@@ -5901,7 +5903,7 @@ class WorkerPostgresTests(unittest.TestCase):
         self.carregar_catalogo("core/database/deploy_database/catalogo.sql")
         self.adm.execute("""
             INSERT INTO chatbot.central_pos_venda
-                (nome, nome_agente, genero_agente, waba_id, phone_number_id, telefone, telefone_sofas, telefone_moveis)
+                (nome, nome_agente, genero_agente, waba_id, phone_number_id, telefone, telefone_atacadao, telefone_baratao)
             VALUES ('Central QA', 'Theo', 'masculino', 'waba-falsa', '999', '551100000001', '557592087803', '557582467000'),
                    ('Outra QA', 'Theo', 'masculino', 'waba-falsa', '888', '551100000002', '557592087803', '557582467000');
         """)
@@ -6368,7 +6370,7 @@ class WorkerPostgresTests(unittest.TestCase):
         self.ciclo()
         self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_humano"))
         self.assertEqual(self.adm.execute("""
-            SELECT produto, encaminhado_sofas, encaminhado_moveis FROM chatbot.atendimento_pos_venda
+            SELECT produto, encaminhado_atacadao, encaminhado_baratao FROM chatbot.atendimento_pos_venda
         """).fetchone(), (None, "557592087803", "557582467000"))
         cur = self.adm.cursor()
         self.assertEqual(buscar_bloqueio_ativo_por_cliente_unidade("5511999990000", "999", cur).bloqueio_dias, 90)
@@ -7042,7 +7044,7 @@ class WorkerPostgresTests(unittest.TestCase):
     def test_conclusao_mista_grava_relato_e_um_carrossel_com_dois_links(self):
         from urllib.parse import parse_qs, urlsplit
         self.preparar_assunto("Estofados e Móveis")
-        for texto in ("Duas ou mais opções acima", "0010.09 e 0010.15"):
+        for texto in ("Duas ou mais opções acima", "0010.09 e 0010.26"):
             self.fila(texto)
             self.ciclo()
         relato = "O sofá rasgou.\nA mesa veio riscada."
@@ -7052,7 +7054,7 @@ class WorkerPostgresTests(unittest.TestCase):
             self.ciclo()
         self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento"))
         self.assertEqual(self.adm.execute(
-            "SELECT detalhes,encaminhado_sofas,encaminhado_moveis FROM chatbot.atendimento_pos_venda"
+            "SELECT detalhes,encaminhado_atacadao,encaminhado_baratao FROM chatbot.atendimento_pos_venda"
         ).fetchone(), (relato, "557592087803", "557582467000"))
         partes = self.adm.execute("""
             SELECT parte_resposta,conteudo_texto,interativo FROM chatbot.historico_mensagens
@@ -7075,7 +7077,7 @@ class WorkerPostgresTests(unittest.TestCase):
                 "- Assunto: Misto\n"
                 "- Números das notas:\n"
                 "  • 0010.09 (ATACADÃO DO SOFÁ - IRECÊ)\n"
-                "  • 0010.15 (ATACADÃO DO SOFÁ - COITÉ)\n\n"
+                "  • 0010.26 (BARATÃO DOS MÓVEIS - SAJ (FEIRÃO))\n\n"
                 + relato
             ))
 
@@ -7089,7 +7091,7 @@ class WorkerPostgresTests(unittest.TestCase):
         self.ciclo()
         self.assertEqual(self.conversa()[:3], (6, 0, True))
         self.assertEqual(self.adm.execute("""
-            SELECT detalhes, encaminhado_sofas, encaminhado_moveis FROM chatbot.atendimento_pos_venda
+            SELECT detalhes, encaminhado_atacadao, encaminhado_baratao FROM chatbot.atendimento_pos_venda
         """).fetchone(), (None, None, None))
         self.assertEqual(self.adm.execute("""
             SELECT count(*) FROM chatbot.historico_mensagens WHERE id_mensagem_fila=%s AND quem_enviou='bot'
@@ -7108,10 +7110,42 @@ class WorkerPostgresTests(unittest.TestCase):
             WHERE quem_enviou='bot' ORDER BY id_mensagem DESC LIMIT 1
         """).fetchone()
         self.assertNotIn("avaria", texto)
-        resumo = parse_qs(urlsplit(interativo["action"]["parameters"]["url"]).query)["text"][0]
-        self.assertEqual(len(resumo.split("\n\n")), 2)
-        self.assertTrue(resumo.endswith("- Assunto: Entrega\n- Número da nota: Perdi a nota"))
-        self.assertNotIn("5511999990000", resumo)
+        cartoes = interativo["action"]["cards"]
+        self.assertEqual(len(cartoes), 2)
+        for cartao in cartoes:
+            resumo = parse_qs(urlsplit(cartao["action"]["parameters"]["url"]).query)["text"][0]
+            self.assertEqual(len(resumo.split("\n\n")), 2)
+            self.assertTrue(resumo.endswith("- Assunto: Entrega\n- Número da nota: Perdi a nota"))
+            self.assertNotIn("5511999990000", resumo)
+
+    def conferir_encaminhamento_uma_rede(self, notas, resposta, rede, numero):
+        self.preparar_pedidos("entrega")
+        for texto in (notas, resposta):
+            self.fila(texto)
+            self.ciclo()
+        self.assertEqual(self.conversa()[:3], (7, 0, False))
+        self.wa.send_carousel.assert_not_called()
+        interativo = self.adm.execute("""
+            SELECT interativo FROM chatbot.historico_mensagens WHERE quem_enviou='bot'
+            ORDER BY id_mensagem DESC LIMIT 1
+        """).fetchone()[0]
+        self.assertEqual(interativo["type"], "cta_url")
+        self.assertNotIn("header", interativo)
+        parametros = interativo["action"]["parameters"]
+        self.assertEqual(parametros["display_text"], "Pós-venda " + rede)
+        self.assertIn("wa.me/" + numero + "?", parametros["url"])
+        destinos = self.adm.execute("""
+            SELECT encaminhado_atacadao, encaminhado_baratao FROM chatbot.atendimento_pos_venda
+        """).fetchone()
+        self.assertEqual(destinos, (numero, None) if rede == "Atacadão" else (None, numero))
+
+    def test_notas_sfb_e_deposito_encaminham_ao_baratao(self):
+        self.conferir_encaminhamento_uma_rede("100.01 e 200.05", "Minha entrega atrasou.",
+                                             "Baratão", "557582467000")
+
+    def test_universal_depois_de_notas_do_atacadao_encaminha_apenas_ao_atacadao(self):
+        self.conferir_encaminhamento_uma_rede("100.09 e 200.15", "Quero um humano",
+                                             "Atacadão", "557592087803")
 
     def test_migracao_sete_etapas_reapresenta_pergunta_e_respeita_visita_antiga(self):
         from core.integrations.whatsapp.messages.etapa6_detalhes_messages import MENSAGEM_DETALHES
@@ -7189,7 +7223,7 @@ class WorkerPostgresTests(unittest.TestCase):
         self.wa.send_message.assert_not_called()
         self.assertEqual(self.adm.execute("SELECT status FROM chatbot.fila_mensagens ORDER BY id_mensagem DESC LIMIT 1").fetchone()[0], "sent")
 
-    def test_quarto_turno_na_lista_encaminha_apenas_estofados_e_bloqueia(self):
+    def test_quarto_turno_na_lista_encaminha_ambas_redes_e_bloqueia(self):
         self.preparar_assunto("Apenas Estofados")
         for turno in range(1, 4):
             self.fila("?", "text")
@@ -7199,8 +7233,8 @@ class WorkerPostgresTests(unittest.TestCase):
         self.ciclo()
         self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_sem_avanco"))
         self.assertEqual(self.adm.execute("""
-            SELECT assunto, encaminhado_moveis, encaminhado_sofas FROM chatbot.atendimento_pos_venda
-        """).fetchone(), (None, None, "557592087803"))
+            SELECT assunto, encaminhado_baratao, encaminhado_atacadao FROM chatbot.atendimento_pos_venda
+        """).fetchone(), (None, "557582467000", "557592087803"))
         self.assertEqual(self.cache.call_args.args[1]["bloqueio_dias"], 90)
 
     def test_produto_quarta_entrada_encaminha_sem_salvar_escolha(self):
@@ -7225,7 +7259,7 @@ class WorkerPostgresTests(unittest.TestCase):
         self.ciclo()
         self.assertEqual(self.conversa()[:3], (4, 0, True))
         self.assertEqual(self.adm.execute("""
-            SELECT produto,encaminhado_sofas,encaminhado_moveis FROM chatbot.atendimento_pos_venda
+            SELECT produto,encaminhado_atacadao,encaminhado_baratao FROM chatbot.atendimento_pos_venda
         """).fetchone(), ("moveis", None, None))
 
     def test_produto_queda_antes_commit_reverte_dado_etapa_e_resposta(self):
@@ -7589,7 +7623,7 @@ class CentralPosVendaAdmin(ConsultasRelacionadasMixin, admin.ModelAdmin):
     fieldsets = (
         ("Atendimento", {"fields": ("nome", "ativa", "nome_agente", "genero_agente")}),
         ("Remetente no WhatsApp", {"fields": ("telefone", "waba_id", "phone_number_id", "waac_id")}),
-        ("Encaminhamento aos setores", {"fields": ("telefone_moveis", "telefone_sofas")}),
+        ("Redes de pós-venda", {"fields": ("telefone_baratao", "telefone_atacadao")}),
         ("Monitoramento", {"fields": ("consultas_do_registro", "id_fuso", "nome_fuso", "fuso_verificado_em")}),
     )
     form = CentralPosVendaForm
@@ -7736,7 +7770,8 @@ class HistoricoAdmin(SomenteConsulta):
 
 @admin.register(models.FilialCompra)
 class FilialAdmin(SomenteConsulta):
-    list_display = ("codigo", "nome")
+    list_display = ("codigo", "nome", "grupo")
+    list_filter = ("grupo",)
     search_fields = ("codigo", "nome")
     ordering = ("codigo",)
 
@@ -7798,11 +7833,11 @@ class CentralPosVenda(models.Model):
         help_text="Informe o ID de conta verificado para este número. Em branco, o envio usa o Phone Number ID.",
     )
     telefone = models.CharField("telefone da central", unique=True)
-    telefone_moveis = models.CharField(
-        "telefone de móveis", blank=True, null=True, validators=[validar_telefone_setor],
+    telefone_baratao = models.CharField(
+        "telefone do pós-venda do Baratão", blank=True, null=True, validators=[validar_telefone_setor],
     )
-    telefone_sofas = models.CharField(
-        "telefone de sofás", blank=True, null=True, validators=[validar_telefone_setor],
+    telefone_atacadao = models.CharField(
+        "telefone do pós-venda do Atacadão", blank=True, null=True, validators=[validar_telefone_setor],
     )
     id_fuso = models.IntegerField("ID do fuso", blank=True, null=True, editable=False)
     nome_fuso = models.TextField("nome do fuso", blank=True, null=True, editable=False)
@@ -7814,11 +7849,11 @@ class CentralPosVenda(models.Model):
         if self.waac_id and self.waac_id == self.phone_number_id:
             erros["waac_id"] = "O WAAC ID deve ser diferente do Phone Number ID."
         if self.ativa:
-            for campo in ("telefone_moveis", "telefone_sofas"):
+            for campo in ("telefone_baratao", "telefone_atacadao"):
                 if not getattr(self, campo):
-                    erros[campo] = "Informe o telefone do setor para ativar a central."
-        if self.telefone_moveis and self.telefone_moveis == self.telefone_sofas:
-            erros["telefone_sofas"] = "Informe números diferentes para móveis e sofás."
+                    erros[campo] = "Informe o telefone desta rede para ativar a central."
+        if self.telefone_baratao and self.telefone_baratao == self.telefone_atacadao:
+            erros["telefone_atacadao"] = "Informe números diferentes para o Baratão e o Atacadão."
         if erros:
             raise ValidationError(erros)
 
@@ -7935,8 +7970,8 @@ class AtendimentoPosVenda(models.Model):
     perdeu_nota = models.BooleanField(null=True)
     foi_a_loja = models.BooleanField(null=True)
     detalhes = models.TextField(null=True)
-    encaminhado_moveis = models.CharField(null=True)
-    encaminhado_sofas = models.CharField(null=True)
+    encaminhado_baratao = models.CharField(null=True)
+    encaminhado_atacadao = models.CharField(null=True)
     telefone_compartilhado = models.CharField(null=True, editable=False)
 
     class Meta:
@@ -7948,6 +7983,8 @@ class AtendimentoPosVenda(models.Model):
 class FilialCompra(models.Model):
     codigo = models.TextField(primary_key=True)
     nome = models.TextField()
+
+    grupo = models.TextField(choices=[("Atacadão", "Atacadão"), ("Baratão", "Baratão")])
 
     def __str__(self):
         return f"{self.codigo} · {self.nome}"
@@ -8902,11 +8939,11 @@ class RemetenteCentralTests(unittest.TestCase):
         self.enterContext(patch("core.integrations.whatsapp.pywa_functions.cliente.WhatsAppCentral",
                                 side_effect=criar_cliente))
         self.enterContext(patch.dict(os.environ, ENV))
-        encaminhar_moveis = contexto(tipo="audio", turnos=3)
-        encaminhar_moveis["produto"] = "moveis"
+        encaminhar_baratao = contexto(etapa=6, tipo="audio", turnos=3)
+        encaminhar_baratao["grupos_das_notas"] = {"Baratão"}
         for ctx, tipo in (
             (contexto(apresentacao=True), "text"), (contexto_produto("talvez"), "button"),
-            (contexto_produto("móveis"), "list"), (encaminhar_moveis, "cta_url"),
+            (contexto_produto("móveis"), "list"), (encaminhar_baratao, "cta_url"),
             (contexto(tipo="audio", turnos=3), "carousel"),
         ):
             for waac in (None, "771"):
@@ -9487,33 +9524,33 @@ INSERT INTO chatbot.etapa_transicao (id_etapa_origem, evento, id_etapa_destino) 
 
 INSERT INTO chatbot.cache_controle (nome) VALUES ('centrais_pos_venda');
 
-INSERT INTO chatbot.filial_compra (codigo, nome) VALUES
-    ('01', 'SFB TANCREDO NEVES - APENAS CONSULTA'),
-    ('02', 'SFB CRUZ - APENAS CONSULTA'),
-    ('03', 'SFB SAJ - APENAS CONSULTA!'),
-    ('05', 'DEPÓSITO - SFB'),
-    ('06', 'BARATÃO DOS MÓVEIS - VERA CRUZ - APENAS CONSULTA'),
-    ('07', 'SFB VALENÇA - APENAS CONSULTA'),
-    ('08', 'BARATÃO DOS MÓVEIS - DIAS DAVILA'),
-    ('09', 'ATACADÃO DO SOFÁ - IRECÊ'),
-    ('10', 'ATACADÃO DO SOFÁ - ST ESTEVÃO'),
-    ('11', 'ATACADÃO DO SOFÁ - JEQUIÉ'),
-    ('12', 'ATACADÃO DO SOFÁ - SR DO BONFIM'),
-    ('13', 'ATACADÃO DO SOFÁ - JUAZEIRO'),
-    ('14', 'ATACADÃO DO SOFÁ - SERRINHA'),
-    ('15', 'ATACADÃO DO SOFÁ - COITÉ'),
-    ('16', 'ATACADÃO DO SOFÁ - ILHÉUS'),
-    ('17', 'ATACADÃO DO SOFÁ - POMBAL'),
-    ('18', 'ATACADÃO DO SOFÁ - JACOBINA'),
-    ('19', 'ATACADÃO DO SOFÁ - ATC VERA CRUZ'),
-    ('21', 'ATACADÃO DO SOFÁ - CAPIM GROSSO'),
-    ('22', 'ATACADÃO DO SOFÁ - EUCLIDES'),
-    ('23', 'ATACADÃO DO SOFÁ - FEIRA DE SANTANA'),
-    ('25', 'ATACADÃO DO SOFÁ - PAULO AFONSO'),
-    ('26', 'BARATÃO DOS MÓVEIS - SAJ (FEIRÃO)'),
-    ('27', 'BARATÃO DOS MÓVEIS - PTN (FEIRÃO)'),
-    ('28', 'BARATÃO DOS MÓVEIS - CRUZ DAS ALMAS (FEIRÃO)'),
-    ('29', 'BARATÃO DOS MÓVEIS - VALENÇA (FEIRÃO)');
+INSERT INTO chatbot.filial_compra (codigo, nome, grupo) VALUES
+    ('01', 'SFB TANCREDO NEVES - APENAS CONSULTA', 'Baratão'),
+    ('02', 'SFB CRUZ - APENAS CONSULTA', 'Baratão'),
+    ('03', 'SFB SAJ - APENAS CONSULTA!', 'Baratão'),
+    ('05', 'DEPÓSITO - SFB', 'Baratão'),
+    ('06', 'BARATÃO DOS MÓVEIS - VERA CRUZ - APENAS CONSULTA', 'Baratão'),
+    ('07', 'SFB VALENÇA - APENAS CONSULTA', 'Baratão'),
+    ('08', 'BARATÃO DOS MÓVEIS - DIAS DAVILA', 'Baratão'),
+    ('09', 'ATACADÃO DO SOFÁ - IRECÊ', 'Atacadão'),
+    ('10', 'ATACADÃO DO SOFÁ - ST ESTEVÃO', 'Atacadão'),
+    ('11', 'ATACADÃO DO SOFÁ - JEQUIÉ', 'Atacadão'),
+    ('12', 'ATACADÃO DO SOFÁ - SR DO BONFIM', 'Atacadão'),
+    ('13', 'ATACADÃO DO SOFÁ - JUAZEIRO', 'Atacadão'),
+    ('14', 'ATACADÃO DO SOFÁ - SERRINHA', 'Atacadão'),
+    ('15', 'ATACADÃO DO SOFÁ - COITÉ', 'Atacadão'),
+    ('16', 'ATACADÃO DO SOFÁ - ILHÉUS', 'Atacadão'),
+    ('17', 'ATACADÃO DO SOFÁ - POMBAL', 'Atacadão'),
+    ('18', 'ATACADÃO DO SOFÁ - JACOBINA', 'Atacadão'),
+    ('19', 'ATACADÃO DO SOFÁ - ATC VERA CRUZ', 'Atacadão'),
+    ('21', 'ATACADÃO DO SOFÁ - CAPIM GROSSO', 'Atacadão'),
+    ('22', 'ATACADÃO DO SOFÁ - EUCLIDES', 'Atacadão'),
+    ('23', 'ATACADÃO DO SOFÁ - FEIRA DE SANTANA', 'Atacadão'),
+    ('25', 'ATACADÃO DO SOFÁ - PAULO AFONSO', 'Atacadão'),
+    ('26', 'BARATÃO DOS MÓVEIS - SAJ (FEIRÃO)', 'Baratão'),
+    ('27', 'BARATÃO DOS MÓVEIS - PTN (FEIRÃO)', 'Baratão'),
+    ('28', 'BARATÃO DOS MÓVEIS - CRUZ DAS ALMAS (FEIRÃO)', 'Baratão'),
+    ('29', 'BARATÃO DOS MÓVEIS - VALENÇA (FEIRÃO)', 'Baratão');
 ```
 
 ## 65. `workers/worker_flow/transacoes/encerramento_atendimento.py` (alterar)
@@ -10015,26 +10052,26 @@ MENSAGEM_DETALHES = (
 
 from core.integrations.whatsapp.pywa_functions.saudacao import obter_saudacao_por_horario
 
-MENSAGEM_PRODUTO_NAO_INFORMADO = (
-    "Como não consegui identificar se sua compra foi de estofados ou de móveis, "
-    "vou te passar o contato de cada setor.\n\n"
-    "Deslize para o lado para ver as duas opções, caso tenha comprado tanto móveis e estofados, "
-    "selecione a opção para o caso que deseja resolver primeiro."
-)
-MENSAGEM_AMBOS_PRODUTOS = (
-    "Como você comprou tanto estofados quanto móveis, vou te passar os contatos "
-    "dos dois setores de pós-venda.\n\n"
-    "Deslize para o lado para ver a outra opção, e selecione a opção que quer resolver primeiro."
-)
-ROTULO_ESTOFADOS = "Pós-venda Estofados"
-ROTULO_MOVEIS = "Pós-venda Móveis"
-MENSAGEM_POR_SETOR = {
-    "sofas": "Para falar sobre seus estofados, toque abaixo.",
-    "moveis": "Para falar sobre seus móveis, toque abaixo.",
+ROTULOS_POS_VENDA = {
+    "atacadao": "Pós-venda Atacadão",
+    "baratao": "Pós-venda Baratão",
 }
-
-
-MENSAGEM_FINAL = "Obrigado pelas informações. Use o botão abaixo para falar com o pós-venda."
+MENSAGEM_POR_GRUPO = {
+    "atacadao": "Sua compra é do Atacadão. Toque no botão abaixo para falar com o pós-venda do Atacadão.",
+    "baratao": "Sua compra é do Baratão. Toque no botão abaixo para falar com o pós-venda do Baratão.",
+}
+MENSAGEM_SEM_NOTA = (
+    "Vou te passar os contatos do pós-venda do Atacadão e do Baratão. "
+    "Deslize para o lado e toque no botão da rede onde você fez a compra."
+)
+MENSAGEM_NOTA_PERDIDA = (
+    "Tudo bem se você perdeu a nota. Deslize para o lado para ver os dois contatos "
+    "e toque no pós-venda da rede onde você fez a compra: Atacadão ou Baratão."
+)
+MENSAGEM_DUAS_REDES = (
+    "Suas notas são de compras no Atacadão e no Baratão. "
+    "Deslize para o lado e escolha o pós-venda da rede com que deseja falar primeiro."
+)
 AVISO_ASSISTENCIA = (
     "Olha, vale lembra que em caso de avarias, o protocolo é tirar fotos e vídeos e ir pessoalmente à loja "
     "em que realizou a compra para abrir um chamado. Lembrando que a garantia é de 90 dias "
@@ -10113,12 +10150,12 @@ def atualizar_cpf_do_atendimento(id_conversa, cpf_titular, cursor):
         raise ValueError("Atendimento ausente ao confirmar CPF.")
 
 
-def registrar_contatos_encaminhados(id_conversa, telefone_moveis, telefone_sofas, cursor):
+def registrar_contatos_encaminhados(id_conversa, telefone_baratao, telefone_atacadao, cursor):
     cursor.execute("""
         UPDATE chatbot.atendimento_pos_venda
-        SET encaminhado_moveis = %s, encaminhado_sofas = %s
+        SET encaminhado_baratao = %s, encaminhado_atacadao = %s
         WHERE id_conversa = %s;
-    """, (telefone_moveis, telefone_sofas, id_conversa))
+    """, (telefone_baratao, telefone_atacadao, id_conversa))
     if cursor.rowcount != 1:
         raise ValueError("Atendimento ausente ao confirmar contatos.")
 
@@ -11392,7 +11429,7 @@ class CadastroCentralTests(unittest.TestCase):
         self.request = Mock()
         self.dados = dict(nome="Central QA", nome_agente="Theo", genero_agente="masculino",
                           ativa=True, waba_id="100", phone_number_id="101", telefone="551199990001",
-                          telefone_moveis="551199990002", telefone_sofas="551199990003")
+                          telefone_baratao="551199990002", telefone_atacadao="551199990003")
         self.chamadas = Mock()
         for funcao in ("validar_cache_unidades_disponivel_ou_erro", "validar_phone_number_id_da_waba",
                        "ativar_waba_id", "registrar_numero_whatsapp"):
@@ -11871,12 +11908,15 @@ def pediu_humano(tipo, texto):
     return tipo == "text" and "humano" in (texto or "").casefold()
 
 
-def setores_encaminhamento(produto):
-    if produto == "moveis":
-        return ("moveis",)
-    if produto == "estofados":
-        return ("sofas",)
-    return ("sofas", "moveis")
+def grupos_encaminhamento(contexto):
+    """Usa todas as notas aceitas da conversa, inclusive no encaminhamento antecipado."""
+    grupos = contexto.get("grupos_das_notas") or set()
+    if not contexto.get("perdeu_nota"):
+        if grupos == {"Atacadão"}:
+            return ("atacadao",)
+        if grupos == {"Baratão"}:
+            return ("baratao",)
+    return ("atacadao", "baratao")
 ```
 
 ## 92. `deploy/migrations/20261127_midia_repete_etapa.sql` (aplicar)
@@ -11986,7 +12026,7 @@ class EfeitosPorEtapaTests(unittest.TestCase):
                     self.cursor.reset_mock()
                     self.assertEqual(self.persistir(
                         etapa, evento_transicao=evento, id_etapa_resultante=7,
-                        encaminhado_moveis="557582467000", encaminhado_sofas="557592087803",
+                        encaminhado_baratao="557582467000", encaminhado_atacadao="557592087803",
                     ), {"encaminhado": True})
                     self.cursor.execute.assert_called_once()
                     self.assertEqual(self.cursor.execute.call_args.args[1],
@@ -12036,7 +12076,7 @@ class EfeitosPorEtapaTests(unittest.TestCase):
             self.persistir(1, evento_transicao="nome_valido_falta_cpf", id_etapa_resultante=2)
         with self.assertRaises(ValueError):
             self.persistir(1, evento_transicao="humano_solicitado", id_etapa_resultante=7,
-                           encaminhado_moveis="557582467000")
+                           encaminhado_baratao="557582467000")
         self.cursor.execute.assert_not_called()
 
     def test_registro_ausente_falha_para_worker_reverter_a_transacao(self):
@@ -12223,8 +12263,8 @@ class Etapa3Tests(unittest.TestCase):
             self.assertEqual(envio["id_etapa_resultante"], 7)
             self.assertEqual(envio["evento_transicao"], evento)
             self.assertNotIn("produto", envio)
-            self.assertIn("encaminhado_sofas", envio)
-            self.assertIn("encaminhado_moveis", envio)
+            self.assertIn("encaminhado_atacadao", envio)
+            self.assertIn("encaminhado_baratao", envio)
 
     def test_mapa_invalido_impede_envio(self):
         ctx = contexto_produto()
@@ -12361,24 +12401,20 @@ class AssuntoTests(unittest.TestCase):
             self.assertEqual(atualizar_banco_conforme_transicao_de_etapa(ctx, envio, cursor), {})
             cursor.execute.assert_not_called()
 
-    def test_universal_antecipa_assunto_e_respeita_produto_ja_escolhido(self):
-        for produto, entrada, tipo, turnos, evento, setores in (
-            ("moveis", "Quero um humano para a entrega", "text", 0, "humano_solicitado", {"moveis"}),
-            ("estofados", None, "image", 3, "limite_sem_avanco", {"sofas"}),
-            ("ambos", "x", "interactive", 3, "limite_sem_avanco", {"moveis", "sofas"}),
+    def test_universal_antes_das_notas_oferece_as_duas_redes(self):
+        for produto, entrada, tipo, turnos, evento in (
+            ("moveis", "Quero um humano para a entrega", "text", 0, "humano_solicitado"),
+            ("estofados", None, "image", 3, "limite_sem_avanco"),
+            ("ambos", "x", "interactive", 3, "limite_sem_avanco"),
         ):
-            ctx = contexto_assunto(entrada, tipo=tipo, turnos=turnos, produto=produto)
-            envio = flow_sender(ctx)
-            self.assertEqual((envio["id_etapa_resultante"], envio["evento_transicao"]), (7, evento))
-            self.assertNotIn("assunto", envio)
-            self.assertEqual({k for k in envio if k.startswith("encaminhado_")},
-                             {f"encaminhado_{s}" for s in setores})
-            if len(setores) == 1:
-                self.assertEqual(envio["interativo"]["type"], "cta_url")
-                self.assertNotIn("header", self.wa.send_message.call_args.kwargs)
-                self.assertNotIn("header", envio["interativo"])
-                telefone = ctx["central"]["telefone_" + next(iter(setores))]
-                self.assertIn(f"wa.me/{telefone}?", envio["interativo"]["action"]["parameters"]["url"])
+            with self.subTest(produto=produto):
+                ctx = contexto_assunto(entrada, tipo=tipo, turnos=turnos, produto=produto)
+                envio = flow_sender(ctx)
+                self.assertEqual((envio["id_etapa_resultante"], envio["evento_transicao"]), (7, evento))
+                self.assertNotIn("assunto", envio)
+                self.assertEqual({k for k in envio if k.startswith("encaminhado_")},
+                                 {"encaminhado_baratao", "encaminhado_atacadao"})
+                self.assertEqual(len(envio["interativo"]["action"]["cards"]), 2)
 
     def test_mapa_e_confirmacao_da_meta_antes_de_qualquer_efeito(self):
         ctx = contexto_assunto("Montagem")
@@ -12892,5 +12928,59 @@ ALTER TABLE chatbot.atendimento_pos_venda
     CHECK (telefone_compartilhado ~ '^[1-9][0-9]{0,14}$');
 CREATE INDEX IF NOT EXISTS cliente_cpf_conciliacao
     ON chatbot.cliente (cpf_titular, id_cliente) WHERE cpf_titular IS NOT NULL;
+COMMIT;
+```
+
+## 102. `deploy/migrations/20261127_encaminhamento_por_rede.sql` (criar)
+
+```sql
+-- V0.3.0 → V0.4.0. Executar inteiro com os três serviços pausados.
+-- Os números de teste existentes são reaproveitados sem reescrever mensagens ou históricos.
+BEGIN;
+SET LOCAL lock_timeout = '8s';
+LOCK TABLE chatbot.central_pos_venda, chatbot.atendimento_pos_venda, chatbot.filial_compra
+    IN ACCESS EXCLUSIVE MODE;
+
+ALTER TABLE chatbot.filial_compra ADD COLUMN IF NOT EXISTS grupo text;
+UPDATE chatbot.filial_compra SET grupo='Baratão'
+WHERE grupo IS NULL AND codigo IN ('01','02','03','05','06','07','08','26','27','28','29');
+UPDATE chatbot.filial_compra SET grupo='Atacadão'
+WHERE grupo IS NULL AND codigo IN ('09','10','11','12','13','14','15','16','17','18','19','21','22','23','25');
+-- Uma filial desconhecida precisa de classificação explícita antes de ativar o fluxo.
+ALTER TABLE chatbot.filial_compra ALTER COLUMN grupo SET NOT NULL;
+
+DO $migrar$
+DECLARE
+    regra_produto name;
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_constraint WHERE conrelid='chatbot.filial_compra'::regclass
+                   AND conname='filial_compra_grupo_check') THEN
+        ALTER TABLE chatbot.filial_compra ADD CONSTRAINT filial_compra_grupo_check
+            CHECK (grupo IN ('Atacadão','Baratão'));
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_attribute WHERE attrelid='chatbot.atendimento_pos_venda'::regclass
+               AND attname='encaminhado_moveis' AND NOT attisdropped) THEN
+        -- Só a regra que cruza produto + dois contatos perde a validade.
+        SELECT c.conname INTO STRICT regra_produto FROM pg_constraint c
+        WHERE c.conrelid='chatbot.atendimento_pos_venda'::regclass AND c.contype='c'
+          AND ARRAY(SELECT a.attname::text FROM pg_attribute a
+                    WHERE a.attrelid=c.conrelid AND a.attnum=ANY(c.conkey) ORDER BY a.attname)
+              = ARRAY['encaminhado_moveis','encaminhado_sofas','produto'];
+        EXECUTE format('ALTER TABLE chatbot.atendimento_pos_venda DROP CONSTRAINT %I', regra_produto);
+        ALTER TABLE chatbot.atendimento_pos_venda RENAME COLUMN encaminhado_moveis TO encaminhado_baratao;
+        ALTER TABLE chatbot.atendimento_pos_venda RENAME COLUMN encaminhado_sofas TO encaminhado_atacadao;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_attribute WHERE attrelid='chatbot.central_pos_venda'::regclass
+               AND attname='telefone_moveis' AND NOT attisdropped) THEN
+        ALTER TABLE chatbot.central_pos_venda RENAME COLUMN telefone_moveis TO telefone_baratao;
+        ALTER TABLE chatbot.central_pos_venda RENAME COLUMN telefone_sofas TO telefone_atacadao;
+    END IF;
+    -- Estas consultas também detectam uma instalação parcial com colunas ausentes.
+    PERFORM telefone_baratao, telefone_atacadao FROM chatbot.central_pos_venda LIMIT 0;
+    PERFORM encaminhado_baratao, encaminhado_atacadao FROM chatbot.atendimento_pos_venda LIMIT 0;
+END;
+$migrar$;
 COMMIT;
 ```

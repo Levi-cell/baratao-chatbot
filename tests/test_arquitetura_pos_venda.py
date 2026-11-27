@@ -76,7 +76,7 @@ class EfeitosPorEtapaTests(unittest.TestCase):
                     self.cursor.reset_mock()
                     self.assertEqual(self.persistir(
                         etapa, evento_transicao=evento, id_etapa_resultante=7,
-                        encaminhado_moveis="557582467000", encaminhado_sofas="557592087803",
+                        encaminhado_baratao="557582467000", encaminhado_atacadao="557592087803",
                     ), {"encaminhado": True})
                     self.cursor.execute.assert_called_once()
                     self.assertEqual(self.cursor.execute.call_args.args[1],
@@ -126,7 +126,7 @@ class EfeitosPorEtapaTests(unittest.TestCase):
             self.persistir(1, evento_transicao="nome_valido_falta_cpf", id_etapa_resultante=2)
         with self.assertRaises(ValueError):
             self.persistir(1, evento_transicao="humano_solicitado", id_etapa_resultante=7,
-                           encaminhado_moveis="557582467000")
+                           encaminhado_baratao="557582467000")
         self.cursor.execute.assert_not_called()
 
     def test_registro_ausente_falha_para_worker_reverter_a_transacao(self):

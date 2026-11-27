@@ -24,6 +24,10 @@ Commit: `703f386f7647cb5096daf29816ede50059264674`
 
 ### Beta V0.3.0 — Concilia cadastros por CPF e telefone confirmado
 
+Commit: `1800e3e68fcf49dd308faf8957e888db4182f0fb`
+
+### Beta V0.4.0 — Encaminha atendimentos pela rede das notas informadas
+
 Commit: PENDENTE
 
 ## Padrão de numeração

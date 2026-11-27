@@ -134,8 +134,8 @@ class Etapa3Tests(unittest.TestCase):
             self.assertEqual(envio["id_etapa_resultante"], 7)
             self.assertEqual(envio["evento_transicao"], evento)
             self.assertNotIn("produto", envio)
-            self.assertIn("encaminhado_sofas", envio)
-            self.assertIn("encaminhado_moveis", envio)
+            self.assertIn("encaminhado_atacadao", envio)
+            self.assertIn("encaminhado_baratao", envio)
 
     def test_mapa_invalido_impede_envio(self):
         ctx = contexto_produto()

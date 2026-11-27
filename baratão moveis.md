@@ -2,7 +2,7 @@
 
 A central atende clientes das lojas Baratão e Atacadão. Um chat reúne um cliente e a central de pós-venda. Cada nova conversa começa pelo nome do titular e coleta novamente o CPF. O titular pode ser diferente de quem escreve. A filial de compra vem do sufixo da nota.
 
-**Beta V0.3.0.** Sete etapas e 21 transições. [Fluxograma do atendimento](docs/fluxograma_atendimento.md) · [Fluxograma da arquitetura](docs/fluxograma_arquitetura.md)
+**Beta V0.4.0.** Sete etapas e 21 transições. [Fluxograma do atendimento](docs/fluxograma_atendimento.md) · [Fluxograma da arquitetura](docs/fluxograma_arquitetura.md)
 
 ## Roteiro do cliente
 
@@ -16,7 +16,7 @@ A cada entrada, localizar o chat do cliente com a central e retomar a conversa a
 | 4 · Assunto | “Certo, sobre qual assunto você quer falar? Selecione apenas uma opção.” | Registrar o assunto na conversa e avançar para a etapa 5. |
 | 5 · Pedidos | “Me informe o número do pedido que aparece na sua nota.” | Extrair os números válidos ou aceitar **Perdi a nota**, por botão ou texto. |
 | 6 · Situação | “Certo, estamos quase lá! 😁<br><br>Para podermos te ajudar da melhor forma possível, descreva com o máximo de detalhes a sua situação e o que você precisa.” | Salvar o relato deste atendimento. |
-| 7 · Encaminhamento | Apresentar o contato de Móveis, o de Estofados ou os dois, conforme o produto desta conversa. | Aplicar a variante do produto e enviar uma mensagem com um botão ou um carrossel de dois cartões. Registrar os números apresentados depois do aceite da Meta. |
+| 7 · Encaminhamento | Identificar a rede de cada nota desta conversa e apresentar o pós-venda responsável. | Registrar os números apresentados depois do aceite da Meta. |
 
 A lista de assunto usa títulos curtos, com a explicação na descrição da opção.
 
@@ -32,16 +32,17 @@ O cliente também pode digitar. “Previsão de entrega” identifica Entrega. �
 
 **Cliente que retorna.** Pedir novamente nome e CPF do titular. Atualizar o cliente e a cópia no atendimento. O resumo usa somente os dados desta conversa. Uma conversa já ativa continua na etapa persistida.
 
-**Correção e encaminhamento.** Após a saudação, uma mídia repete a pergunta com o aviso de texto. Uma correção usa o mesmo contador da etapa. Um texto com “humano” ou a quarta resposta consecutiva inválida leva à etapa 7. Resposta válida avança e zera a contagem. O encaminhamento usa o produto confirmado nesta conversa.
+**Correção e encaminhamento.** Após a saudação, uma mídia repete a pergunta com o aviso de texto. Uma correção usa o mesmo contador da etapa. Um texto com “humano” ou a quarta resposta consecutiva inválida leva à etapa 7. Resposta válida avança e zera a contagem. O encaminhamento consulta as filiais das notas já confirmadas nesta conversa.
 
-**Encaminhamento na etapa 7.** Um único produto recebe seu botão. Ao concluir a coleta com um único produto, o Theo diz “Obrigado pelas informações. Use o botão abaixo para falar com o pós-venda.” No encaminhamento antecipado com um único produto, usa a frase do setor indicada abaixo. Com ambos os produtos ou sem produto confirmado, a mensagem inclui um carrossel de dois cartões.
+**Encaminhamento na etapa 7.** A etapa 3 continua coletando o produto para o consultor. A etapa 7 usa o grupo cadastrado na filial de cada nota, inclusive quando o cliente pede um humano ou atinge o limite de repetições.
 
-| Produto desta conversa | Mensagem de saída | Contatos registrados |
-| --- | --- | --- |
-| Apenas móveis | “Para falar sobre seus móveis, toque abaixo.” Botão **Pós-venda Móveis**. | Número de Móveis usado no botão. |
-| Apenas estofados | “Para falar sobre seus estofados, toque abaixo.” Botão **Pós-venda Estofados**. | Número de Estofados usado no botão. |
-| Ambos | O Theo explica que a compra inclui estofados e móveis e apresenta o contato dos dois setores. | Registrar ambos os contatos no mesmo encaminhamento. |
-| Produto ainda não informado | O Theo explica que ainda não conseguiu identificar o produto e oferece o contato de cada setor. | Registrar ambos os contatos e manter o produto em aberto. |
+| Notas desta conversa | O que o cliente recebe |
+| --- | --- |
+| Uma ou várias, todas do Baratão | Um botão **Pós-venda Baratão**, sem foto. Inclui as filiais SFB e o depósito SFB. |
+| Uma ou várias, todas do Atacadão | Um botão **Pós-venda Atacadão**, sem foto. |
+| Pelo menos uma de cada rede | Um carrossel com as duas redes. O cliente escolhe qual resolver primeiro. |
+| O cliente escolheu “Perdi a nota” | Um carrossel com as duas redes para escolher onde comprou. |
+| Encaminhamento antes de registrar uma nota válida | O Theo oferece os dois contatos, mesmo que o cliente já tenha escolhido um produto. |
 
 O carrossel orienta a deslizar para ver as duas opções. Cada cartão tem uma foto sem legenda e o nome do setor no botão. O envio possui um único WAMID. Cada URL abre o setor correspondente com o resumo da conversa.
 
@@ -70,13 +71,13 @@ A primeira entrada apresenta o Theo e pede o nome, inclusive se chegar áudio ou
 
 As três primeiras entradas inválidas consecutivas geram correções. O limite é compartilhado entre mídia e erros da etapa. Na quarta entrada, uma nova falha encaminha com o resumo parcial. Uma resposta válida avança e zera o contador. A contagem da solicitação de contato fica na pendência própria. O replay da mesma mensagem e a falha de envio não consomem outra tentativa.
 
-Com o encaminhamento confirmado, o banco registra o encerramento e o Redis recebe o prazo restante do bloqueio interno de 90 dias. Móveis ou Estofados recebe apenas o botão do setor. Quem escolheu ambos ou ainda não informou produto recebe um carrossel com os dois contatos. O bloqueio antiabuso no webhook é independente.
+Com o encaminhamento confirmado, o banco registra o encerramento e o Redis recebe o prazo restante do bloqueio interno de 90 dias. Os contatos seguem as redes das notas conforme a tabela da etapa 7. O bloqueio antiabuso no webhook é independente.
 
 ## Relato, aviso e resumo para o consultor
 
 Nos assuntos Assistência e Misto, o aviso instrui a tirar fotos e vídeos e ir pessoalmente à loja da compra, informa os 90 dias contados do recebimento e orienta quem já foi à loja e está na garantia a desconsiderar o aviso. Todos os assuntos seguem do pedido para o relato e o encaminhamento.
 
-Cada link abre o WhatsApp do setor com um rascunho editável. O texto começa com “Olá, boa tarde! Fui encaminhado(a) pelo assistente Theo e gostaria de atendimento humano.” A saudação varia conforme o horário de São Paulo no momento do encaminhamento. Após uma linha em branco, cada dado coletado aparece em um tópico, na ordem titular da compra, CPF do titular, produto, assunto e número da nota. Cada número aparece com o nome cadastrado da filial entre parênteses. Com duas ou mais notas, o tópico “Números das notas” lista cada número e sua filial em uma linha própria. A escolha “Perdi a nota” ocupa esse mesmo campo. O relato do cliente aparece após outra linha em branco, como parágrafo livre, preservando suas quebras de linha. A entrada que aciona o tratamento universal não conta como relato. Os dois contatos de “Móveis e Estofados” recebem o mesmo rascunho quando o cliente abre os respectivos botões.
+Cada link abre o WhatsApp do setor com um rascunho editável. O texto começa com “Olá, boa tarde! Fui encaminhado(a) pelo assistente Theo e gostaria de atendimento humano.” A saudação varia conforme o horário de São Paulo no momento do encaminhamento. Após uma linha em branco, cada dado coletado aparece em um tópico, na ordem titular da compra, CPF do titular, produto, assunto e número da nota. Cada número aparece com o nome cadastrado da filial entre parênteses. Com duas ou mais notas, o tópico “Números das notas” lista cada número e sua filial em uma linha própria. A escolha “Perdi a nota” ocupa esse mesmo campo. O relato do cliente aparece após outra linha em branco, como parágrafo livre, preservando suas quebras de linha. A entrada que aciona o tratamento universal não conta como relato. Os contatos de Atacadão e Baratão recebem o mesmo rascunho quando o cliente abre os respectivos botões.
 
 O nome do titular pode vir sozinho ou em apresentação própria ou de terceiro. “Eu me chamo Ana Maria Silva” e “O nome dele é João-Pedro da Silva” conservam os sobrenomes. Um prefixo sem nome completo volta à pergunta da etapa 1.
 
@@ -85,7 +86,7 @@ O nome do titular pode vir sozinho ou em apresentação própria ou de terceiro.
 - O formato é `[0-9]+[.][0-9]{2}`. Todo número precisa terminar com o código de dois dígitos de uma filial cadastrada. “Meus pedidos são 0012.09 e 987.29.” identifica dois pedidos, cada um de uma filial. Preservar os zeros da esquerda. A pontuação da frase fica fora do número. Letras ou sinais dentro do identificador, como em `AB12.09`, `12.09X`, `1.2.09` ou `12-3.09`, impedem sua extração.
 - A etapa 5 valida a resposta inteira antes de registrar os pedidos. Em “234.01 e 345.1”, o segundo pedido tem formato inválido e a primeira nota também aguarda o reenvio. Um código de filial ausente, como `.04`, tem o mesmo efeito. Em “comprei 2 cadeiras no pedido 234.01”, o 2 é uma quantidade.
 - Com uma nota inválida, ou sem uma nota identificável, o Theo responde “Olha, não consegui identificar uma nota válida. Me fala novamente a nota, por favor.” Com duas ou mais notas informadas e qualquer erro, responde “Olha, uma ou mais notas estão inválidas. Digite todas novamente, por favor.” O botão **Perdi a nota** acompanha as duas mensagens.
-- A nova resposta define o conjunto a gravar. Se o cliente reenviar só uma nota válida, o atendimento avança com essa nota. Cada resposta recusada conta como um turno sem avanço. O quarto turno encaminha ao humano conforme o produto escolhido.
+- A nova resposta define o conjunto a gravar. Se o cliente reenviar só uma nota válida, o atendimento avança com essa nota. Cada resposta recusada conta como um turno sem avanço. O quarto erro encaminha às duas redes quando ainda não há nota válida.
 - “Perdi a nota” por texto ou pelo próprio botão é a única escolha sem número. Os códigos marcados “APENAS CONSULTA”, o depósito e as lojas de feirão fazem parte do catálogo informado. A descrição da loja pertence ao pedido. A central de atendimento é a mesma para todas as filiais. O [catálogo de filiais](core/database/deploy_database/catalogo.sql) conserva as denominações do ERP.
 - Cada nota tem um número de pedido. Guardar o número declarado em `pedido_conversa`, como texto, com chave primária `(id_conversa, numero)`. Uma conversa aceita vários números. O mesmo número pode aparecer em outra conversa do mesmo cliente ou de outro cliente. Uma repetição dentro da mesma conversa continua sendo um único registro. Usar o chat da conversa para consultar seu histórico de pedidos. A igualdade entre números declarados por pessoas diferentes não comprova que as compras sejam a mesma. Na mesma transação, vincular os números aceitos e registrar `perdeu_nota=false`, ou registrar `true` sem números. Nulo significa que o cliente ainda não respondeu.
 - **Melhoria futura com o ERP Objetivo.** Quando houver integração, verificar como o ERP identifica a compra, a loja, o número da nota e o titular, e se os números são reutilizados. Hoje a informação do cliente é declaratória. A validação com o ERP poderá complementar o registro original, preservando os atendimentos antigos e permitindo tratar divergências.

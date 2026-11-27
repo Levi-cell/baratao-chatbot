@@ -5,7 +5,7 @@ from core.etapas_pos_venda import ETAPA_DETALHES, ETAPA_PEDIDOS, ETAPA_PRODUTO
 
 def buscar_contexto_pos_venda(id_conversa, cursor):
     cursor.execute("""
-        SELECT b.telefone_sofas, b.telefone_moveis, a.nome_titular,
+        SELECT b.telefone_atacadao, b.telefone_baratao, a.nome_titular,
                a.cpf_titular, a.cidade_loja_compra,
                (ultima.id_mensagem IS NULL OR
                 (c.id_etapa_atual = %s AND
@@ -14,7 +14,7 @@ def buscar_contexto_pos_venda(id_conversa, cursor):
                a.produto, a.assunto::text,
                CASE WHEN c.id_etapa_atual = %s THEN ARRAY(SELECT codigo FROM chatbot.filial_compra) END,
                b.phone_number_id, b.waba_id AS messaging_account_id, b.waac_id,
-               ARRAY(SELECT ARRAY[p.numero, f.nome] FROM chatbot.pedido_conversa p
+               ARRAY(SELECT ARRAY[p.numero, f.nome, f.grupo] FROM chatbot.pedido_conversa p
                      LEFT JOIN chatbot.filial_compra f ON f.codigo = p.codigo_filial
                      WHERE p.id_conversa = c.id_conversa ORDER BY p.numero),
                a.perdeu_nota, a.detalhes, a.telefone_compartilhado
@@ -40,7 +40,7 @@ def buscar_contexto_pos_venda(id_conversa, cursor):
         "solicitacao_contato": {"motivo": motivo, "etapa": etapa, "wamids": wamids, "erros": erros}
                               if motivo else None,
         "central": {
-            "telefone_sofas": row[0], "telefone_moveis": row[1],
+            "telefone_atacadao": row[0], "telefone_baratao": row[1],
             "phone_number_id": row[9], "messaging_account_id": row[10], "waac_id": row[11],
         },
         "cadastro": dict(zip(
@@ -49,7 +49,8 @@ def buscar_contexto_pos_venda(id_conversa, cursor):
         "apresentacao_pendente": bool(row[5]),
         "produto": row[6],
         "assunto": row[7],
-        "pedidos_com_filial": row[12],
+        "pedidos_com_filial": [(numero, filial) for numero, filial, _ in row[12]],
+        "grupos_das_notas": frozenset(grupo for _, _, grupo in row[12]),
         "telefone_compartilhado": row[15],
         "perdeu_nota": row[13],
         "detalhes": row[14],

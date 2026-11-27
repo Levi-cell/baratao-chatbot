@@ -77,24 +77,20 @@ class AssuntoTests(unittest.TestCase):
             self.assertEqual(atualizar_banco_conforme_transicao_de_etapa(ctx, envio, cursor), {})
             cursor.execute.assert_not_called()
 
-    def test_universal_antecipa_assunto_e_respeita_produto_ja_escolhido(self):
-        for produto, entrada, tipo, turnos, evento, setores in (
-            ("moveis", "Quero um humano para a entrega", "text", 0, "humano_solicitado", {"moveis"}),
-            ("estofados", None, "image", 3, "limite_sem_avanco", {"sofas"}),
-            ("ambos", "x", "interactive", 3, "limite_sem_avanco", {"moveis", "sofas"}),
+    def test_universal_antes_das_notas_oferece_as_duas_redes(self):
+        for produto, entrada, tipo, turnos, evento in (
+            ("moveis", "Quero um humano para a entrega", "text", 0, "humano_solicitado"),
+            ("estofados", None, "image", 3, "limite_sem_avanco"),
+            ("ambos", "x", "interactive", 3, "limite_sem_avanco"),
         ):
-            ctx = contexto_assunto(entrada, tipo=tipo, turnos=turnos, produto=produto)
-            envio = flow_sender(ctx)
-            self.assertEqual((envio["id_etapa_resultante"], envio["evento_transicao"]), (7, evento))
-            self.assertNotIn("assunto", envio)
-            self.assertEqual({k for k in envio if k.startswith("encaminhado_")},
-                             {f"encaminhado_{s}" for s in setores})
-            if len(setores) == 1:
-                self.assertEqual(envio["interativo"]["type"], "cta_url")
-                self.assertNotIn("header", self.wa.send_message.call_args.kwargs)
-                self.assertNotIn("header", envio["interativo"])
-                telefone = ctx["central"]["telefone_" + next(iter(setores))]
-                self.assertIn(f"wa.me/{telefone}?", envio["interativo"]["action"]["parameters"]["url"])
+            with self.subTest(produto=produto):
+                ctx = contexto_assunto(entrada, tipo=tipo, turnos=turnos, produto=produto)
+                envio = flow_sender(ctx)
+                self.assertEqual((envio["id_etapa_resultante"], envio["evento_transicao"]), (7, evento))
+                self.assertNotIn("assunto", envio)
+                self.assertEqual({k for k in envio if k.startswith("encaminhado_")},
+                                 {"encaminhado_baratao", "encaminhado_atacadao"})
+                self.assertEqual(len(envio["interativo"]["action"]["cards"]), 2)
 
     def test_mapa_e_confirmacao_da_meta_antes_de_qualquer_efeito(self):
         ctx = contexto_assunto("Montagem")
