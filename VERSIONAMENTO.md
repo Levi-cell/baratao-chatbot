@@ -4,6 +4,10 @@
 
 ### Versão beta — Triagem e encaminhamento do pós-venda
 
+Commit: `fc8fc9dc6f2421534a1ebd7b29bbdb4808479b7c`
+
+### Beta V0.0.0 — Otimiza logs do webhook e rastreia mensagens processadas
+
 Commit: PENDENTE
 
 ## Padrão de numeração
@@ -33,7 +37,7 @@ Referência: [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## Registro das próximas versões
 
-1. Antes do commit, registrar a versão e uma descrição de até seis palavras com o campo `Commit: PENDENTE`.
+1. Antes do commit, registrar a versão e uma descrição de até oito palavras com o campo `Commit: PENDENTE`. A sequência de betas numeradas começa em `Beta V0.0.0`.
 2. Criar o commit da versão e publicá-lo na branch `prod`.
 3. Após confirmar a publicação, preencher localmente o hash completo do commit.
 4. Enviar esse registro de hash junto com a versão seguinte.

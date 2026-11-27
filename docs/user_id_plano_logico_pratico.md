@@ -1672,9 +1672,9 @@ def inserir_dados_na_tabela_fila(dados, cursor):
             return {"status": "ignored", "reason": "contato_exige_conciliacao"}
         dados["id_cliente"] = canonica
 
-    linhas_inseridas = inserir_entrada_fila(dados, cursor)
+    id_mensagem = inserir_entrada_fila(dados, cursor)
 
-    if linhas_inseridas == 0:
+    if id_mensagem is None:
         if canonica and canonica != cliente:
             raise IdentidadeDivergente("Conciliação revertida por reentrega concorrente.")
         logger.info(
@@ -1691,6 +1691,7 @@ def inserir_dados_na_tabela_fila(dados, cursor):
     return {
         "status": "inserted",
         "reason": None,
+        "id_mensagem": id_mensagem,
     }
 
 
@@ -1886,7 +1887,7 @@ from core.cache.cache_unidade import (
     unidade_esta_ativa,
 )
 from core.database.connection_aws import get_conn
-from core.logging_config import short_value
+from core.logging_config import referencia_wamid, short_value
 from .bloqueio_meta_guard import (
     verificar_protecao_remetente,
 )
@@ -1904,8 +1905,6 @@ TIPO_EVENTO_DESCONHECIDO = "unknown"
 
 
 def responder_post_webhook(request):
-    print("\n\n\n-----------------------------------------------------------------NOVO EVENTO-----------------------------------------------------------------\n\n\n")
-
     if resposta := _validar_content_type(request):
         return resposta
 
@@ -2018,14 +2017,7 @@ def _processar_evento(request,data):
                 "reason": preparacao_fila["reason"],
             }
 
-        if resultado_fila["status"] == "inserted":
-            logger.info(
-                "request_processado | status=enfileirado acao=fila_insert cliente=%s phone_number_id=%s",
-                short_value(cliente_telefone),
-                short_value(phone_number_id),
-            )
-
-        elif resultado_fila["status"] == "ignored":
+        if resultado_fila["status"] == "ignored":
             logger.info(
                 "mensagem_ignorada | motivo=%s acao=nao_enfileirar cliente=%s phone_number_id=%s",
                 resultado_fila["reason"],
@@ -2033,7 +2025,7 @@ def _processar_evento(request,data):
                 short_value(phone_number_id),
             )
 
-        else:
+        elif resultado_fila["status"] != "inserted":
             logger.error(
                 "request_indisponivel | motivo=%s acao=retornar_503_para_reentrega cliente=%s phone_number_id=%s",
                 resultado_fila["reason"],
@@ -2141,36 +2133,64 @@ def _classificar_evento_meta(data):
 
 
 def _registrar_status_identidade(data):
-    from core.repositories.atendimento.identidade_cliente import (
-        atualizar_username_por_recibo, buscar_central, falha_da_rota_atual,
-    )
-    from core.repositories.atendimento.fallback_contato import reservar_reconfirmacao
+    from core.repositories.atendimento.identidade_cliente import atualizar_username_por_recibo, buscar_central
     valor = _extrair_value(data)
     status = valor["statuses"][0]
     tipo = status.get("status")
     if tipo not in {"delivered", "read", "failed"} or not status.get("id"):
         return JsonResponse({"status":"ok"})
-    if tipo != "failed":
-        try:
-            identidade = extrair_identidade(valor, {"from": status.get("recipient_id"),
-                                                    "from_user_id": status.get("recipient_user_id")})
-            observado_em = datetime.fromtimestamp(int(status["timestamp"]), timezone.utc)
-        except (KeyError, ValueError, TypeError, OverflowError, OSError):
-            return JsonResponse({"status": "ignored"})
-        if not identidade.username:
-            return JsonResponse({"status": "ok"})
-    # Um failed genérico não autoriza troca de destinatário. Só há reserva se a
-    # rota antiga já foi suspensa por evento de identidade assinado e correlacionado.
+    if tipo == "failed":
+        _registrar_falha_entrega(data, status)
+        return JsonResponse({"status": "ok"})
+
+    logger.debug("recibo_meta | status=%s ref_envio=%s", tipo, referencia_wamid(status["id"]))
+    try:
+        identidade = extrair_identidade(valor, {"from": status.get("recipient_id"),
+                                                "from_user_id": status.get("recipient_user_id")})
+        observado_em = datetime.fromtimestamp(int(status["timestamp"]), timezone.utc)
+    except (KeyError, ValueError, TypeError, OverflowError, OSError):
+        return JsonResponse({"status": "ignored"})
+    if not identidade.username:
+        return JsonResponse({"status": "ok"})
     with get_conn(application_name="webhook_status") as conn, conn.cursor() as cursor:
-        central = buscar_central(_extrair_phone_number_id(data),data["entry"][0].get("id"),cursor)
-        if central and tipo != "failed":
+        central = buscar_central(_extrair_phone_number_id(data), data["entry"][0].get("id"), cursor)
+        if central:
             atualizar_username_por_recibo(central[0], status["id"], identidade.user_id,
-                                         identidade.wa_id, identidade.username, observado_em, cursor)
-            return JsonResponse({"status": "ok"})
-        tentativa = falha_da_rota_atual(central[0],status["id"],cursor) if central else None
-        if tentativa and tentativa[3]:
-            reservar_reconfirmacao(tentativa[0],tentativa[1],status["id"],cursor)
-    return JsonResponse({"status":"ok"})
+                                          identidade.wa_id, identidade.username, observado_em, cursor)
+    return JsonResponse({"status": "ok"})
+
+
+def _registrar_falha_entrega(data, status):
+    from core.repositories.atendimento.identidade_cliente import buscar_central, falha_da_rota_atual
+    from core.repositories.atendimento.fallback_contato import reservar_reconfirmacao
+
+    central = tentativa = None
+    recuperacao = "verificacao_inconclusiva"
+    try:
+        with get_conn(application_name="webhook_status") as conn, conn.cursor() as cursor:
+            central = buscar_central(_extrair_phone_number_id(data), data["entry"][0].get("id"), cursor)
+            tentativa = falha_da_rota_atual(central[0], status["id"], cursor) if central else None
+            resultado = "nao_aplicavel"
+            # Só a suspensão confirmada da rota autoriza a reconfirmação.
+            if tentativa and tentativa[3]:
+                nova = reservar_reconfirmacao(tentativa[0], tentativa[1], status["id"], cursor)
+                resultado = "reservada" if nova else "ja_reservada"
+        recuperacao = resultado  # O contexto da conexão já confirmou a transação.
+    finally:
+        erros = status.get("errors")
+        codigos = []
+        if isinstance(erros, list):
+            for erro in erros:
+                codigo = str(erro.get("code", "")) if isinstance(erro, dict) else ""
+                if codigo.isascii() and codigo.isdecimal():
+                    codigos.append(codigo)
+        logger.warning(
+            "entrega_meta_falhou | ref_envio=%s codigos_meta=%s id_central=%s "
+            "id_mensagem=%s id_conversa=%s recuperacao=%s",
+            referencia_wamid(status["id"]), ",".join(codigos) or "-",
+            central[0] if central else "-", tentativa[1] if tentativa else "-",
+            tentativa[0] if tentativa else "-", recuperacao,
+        )
 
 
 def _executar_transacao_fila(dados):
@@ -2184,10 +2204,8 @@ def _executar_transacao_fila(dados):
 
         if resultado["status"] == "inserted":
             fila_logger.info(
-                "fila_insert_ok | acao=enfileirar id_msg=%s cliente=%s phone_number_id=%s tipo=%s",
-                short_value(dados["id_hash_msg"]),
-                short_value(dados["cliente_telefone"]),
-                short_value(dados["id_phone_unidade"]),
+                "fila_insert_ok | status=enfileirado id_mensagem=%s id_central=%s tipo=%s",
+                resultado["id_mensagem"], dados["id_central"],
                 dados["tipo_mensagem"],
             )
 
@@ -2952,13 +2970,14 @@ def inserir_entrada_fila(dados, cursor):
             user_id_origem,username_origem,id_hash_msg,received_data_hora,tipo_mensagem,
             conteudo_texto,interativo,status,retry_count,next_attempt_at)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        ON CONFLICT (id_hash_msg) DO NOTHING
+        ON CONFLICT (id_hash_msg) DO NOTHING RETURNING id_mensagem
     """,(dados["id_central"],dados["id_cliente"],dados["cliente_telefone"],
          dados.get("user_id_origem"),dados.get("username_origem"),dados["id_hash_msg"],
          dados["received_data_hora"],dados["tipo_mensagem"],dados["conteudo_texto"],
          Jsonb(dados["interativo"]) if dados.get("interativo") else None,
          dados["status"],dados["retry_count"],dados["next_attempt_at"]))
-    return cursor.rowcount
+    linha = cursor.fetchone()
+    return linha[0] if linha else None
 ```
 
 ## 22. `core/repositories/atendimento/fallback_contato.py` (criar)
@@ -4454,7 +4473,7 @@ from core.database.connection_aws import get_conn
 from core.integrations.whatsapp.exceptions import ErroEnvioMeta
 from core.integrations.whatsapp.pywa_functions.cliente import antes_do_primeiro_envio
 from core.integrations.whatsapp.pywa_functions.digitacao import indicar_digitacao
-from core.logging_config import short_value
+from core.logging_config import referencia_wamid, short_value
 from core.repositories.atendimento.conversas import tentar_lock_conversa
 from core.repositories.atendimento.locks import (
     LockConversaPerdido,
@@ -4514,8 +4533,7 @@ def worker_flow():
     retry_delay = 5
 
     while True:
-        print("\n\n\n---------------------NOVO CICLO---------------------\n\n\n")
-        logger.info("---------- ciclo_worker_inicio ----------")
+        logger.debug("ciclo_worker_inicio")
 
         conn_ciclo = None
         cursor_ciclo = None
@@ -4683,12 +4701,12 @@ def worker_flow():
                 raise
 
             logger.debug(
-                "resposta_bot_contexto_final_ok | acao=commit id_mensagem=%s id_conversa=%s etapa=%s resposta_ja_existia=%s id_hash_msg_bot=%s tratamento=%s tipo_tratamento=%s",
+                "resposta_bot_contexto_final_ok | acao=commit id_mensagem=%s id_conversa=%s etapa=%s resposta_ja_existia=%s ref_envio=%s tratamento=%s tipo_tratamento=%s",
                 mensagem["id_mensagem"],
                 id_conversa,
                 contexto_final["id_etapa_resultante"],
                 contexto_final["resposta_ja_existia"],
-                contexto_final["id_hash_msg_bot"],
+                referencia_wamid(contexto_final["id_hash_msg_bot"]),
                 contexto_envio.get("tratamento", False),
                 contexto_envio.get("tipo_tratamento"),
             )
@@ -4706,6 +4724,17 @@ def worker_flow():
             if resultado_encerramento is None:
                 raise RuntimeError("Finalização da mensagem sem resultado de encerramento")
 
+            logger.info(
+                "mensagem_processada | status=sent id_mensagem=%s id_central=%s id_conversa=%s "
+                "etapa=%s evento=%s tentativa=%s ref_envio=%s lock_version=%s atendimento_encerrado=%s "
+                "movimento=%s turnos_sem_avanco=%s resposta_ja_existia=%s",
+                mensagem["id_mensagem"], contexto_banco["id_central"], id_conversa,
+                contexto_final["id_etapa_resultante"], contexto_envio.get("evento_transicao"), mensagem["retry_count"],
+                referencia_wamid(contexto_final.get("id_hash_msg_bot")), lock_version,
+                resultado_encerramento["atendimento_encerrado"],
+                contexto_final.get("movimento_conversa"), contexto_final.get("turnos_sem_avanco"),
+                contexto_final["resposta_ja_existia"],
+            )
             registrar_cache_bloqueio_apos_commit(
                 mensagem,
                 resultado_encerramento,
@@ -4758,17 +4787,17 @@ def worker_flow():
             if isinstance(erro.__cause__, LockConversaPerdido):
                 conn_ciclo.rollback()
                 logger.critical(
-                    "meta_confirmou_com_lock_perdido | conversa=%s hash=%s risco=duplicidade",
+                    "meta_confirmou_com_lock_perdido | id_conversa=%s ref_envio=%s risco=duplicidade",
                     erro.id_conversa,
-                    erro.id_hash_msg_bot,
+                    referencia_wamid(erro.id_hash_msg_bot),
                 )
                 continue
             logger.critical(
-                "banco_falhou_apos_envio_meta | risco=resposta_duplicada acao=reagendar_sem_sent id_mensagem=%s id_conversa=%s etapa=%s id_hash_msg_bot=%s tratamento=%s tipo_tratamento=%s erro=%s",
+                "banco_falhou_apos_envio_meta | risco=resposta_duplicada acao=reagendar_sem_sent id_mensagem=%s id_conversa=%s etapa=%s ref_envio=%s tratamento=%s tipo_tratamento=%s erro=%s",
                 erro.id_mensagem,
                 erro.id_conversa,
                 erro.id_etapa,
-                erro.id_hash_msg_bot,
+                referencia_wamid(erro.id_hash_msg_bot),
                 contexto_envio.get("tratamento", False),
                 contexto_envio.get("tipo_tratamento"),
                 erro,
@@ -5193,18 +5222,6 @@ def finalizar_mensagem_processada(
     )
 
     marcar_mensagem_como_enviada(mensagem["id_mensagem"], cursor)
-
-    logger.info(
-        "mensagem_processada | acao=marcar_sent id_mensagem=%s cliente=%s phone_number_id=%s id_unidade=%s id_conversa=%s estado=%s lock_version=%s atendimento_encerrado=%s",
-        mensagem["id_mensagem"],
-        short_value(mensagem["cliente_telefone"]),
-        short_value(mensagem["id_phone_unidade"]),
-        contexto_banco["id_unidade"],
-        id_conversa,
-        contexto_conversa["estado"],
-        lock_version,
-        resultado_encerramento["atendimento_encerrado"],
-    )
 
     return resultado_encerramento
 
@@ -5965,6 +5982,50 @@ class WorkerPostgresTests(unittest.TestCase):
             stack.enter_context(patch.object(flood_guard, "avaliar_flood_redis", return_value={"redis_ok": False}))
             with redirect_stdout(io.StringIO()):
                 return post_flow.responder_post_webhook(req)
+
+    def test_log_do_webhook_e_do_worker_seguem_a_mesma_linha_apos_commit(self):
+        import re
+        from callback.webhook.services import post_flow
+
+        eventos = []
+        def observar(formato, *args):
+            texto = formato % args
+            evento = texto.partition(" |")[0]
+            if evento in {"fila_insert_ok", "mensagem_processando", "mensagem_processada"}:
+                chave = int(re.search(r"\bid_mensagem=(\d+)", texto)[1])
+                # Outra conexão só vê a mudança se o commit já aconteceu.
+                linha = self.adm.execute("SELECT status FROM chatbot.fila_mensagens WHERE id_mensagem=%s",
+                                        (chave,)).fetchone()
+                eventos.append((evento, chave, linha))
+
+        with patch.object(post_flow.fila_logger, "info", side_effect=observar), \
+             patch.object(runtime.logger, "info", side_effect=observar):
+            self.postar_webhook("5511999990000", None, None, "wamid.teste.log")
+            self.ciclo()
+            self.postar_webhook("5511999990000", None, None, "wamid.teste.log")
+        chave, = self.adm.execute("SELECT id_mensagem FROM chatbot.fila_mensagens").fetchone()
+        self.assertEqual(eventos, [
+            ("fila_insert_ok", chave, ("pending",)),
+            ("mensagem_processando", chave, ("processing",)),
+            ("mensagem_processada", chave, ("sent",)),
+        ])
+
+    def test_recibo_failed_sem_rota_registra_codigo_sem_conteudo_do_cliente(self):
+        from callback.webhook.services import post_flow
+        from core.logging_config import referencia_wamid
+
+        data = {"entry": [{"id": "waba-falsa", "changes": [{"value": {"metadata": {"phone_number_id": "999"}}}]}]}
+        status = {"id": "wamid.resposta.privada", "errors": [{"code": 131026, "message": "texto privado"}]}
+        with patch.object(post_flow, "get_conn", side_effect=lambda **kw: psycopg.connect(self.dsn)), \
+             patch.object(post_flow.logger, "warning") as aviso:
+            post_flow._registrar_falha_entrega(data, status)
+        formato, *args = aviso.call_args.args
+        texto = formato % tuple(args)
+        self.assertIn("codigos_meta=131026", texto)
+        self.assertIn("recuperacao=nao_aplicavel", texto)
+        self.assertIn("ref_envio=" + referencia_wamid(status["id"]), texto)
+        self.assertNotIn("texto privado", texto)
+        self.assertNotIn(status["id"], texto)
 
     def test_oito_combinacoes_do_webhook_assinado_ate_o_primeiro_envio(self):
         from itertools import product

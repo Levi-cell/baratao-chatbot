@@ -1,4 +1,5 @@
 import logging
+from core.logging_config import referencia_wamid
 
 from core.repositories.atendimento.historico import inserir_historico_mensagem_bot
 from core.repositories.seguranca.suspeita_bot import (
@@ -92,11 +93,11 @@ def atualizar_banco_com_contexto_final(
         cursor,
     )
 
-    logger.info(
-        "resposta_bot_persistida | acao=registrar_historico_e_contexto "
+    logger.debug(
+        "resposta_bot_preparada | acao=registrar_historico_e_contexto "
         "id_conversa=%s id_historico_bot=%s inserido=%s "
         "resposta_ja_existia=%s movimento=%s etapa=%s evento=%s "
-        "id_hash_msg_bot=%s turnos_sem_avanco=%s",
+        "ref_envio=%s turnos_sem_avanco=%s",
         id_conversa,
         id_historico_bot,
         historico_bot_inserido,
@@ -104,7 +105,7 @@ def atualizar_banco_com_contexto_final(
         movimento,
         id_etapa_resultante,
         contexto_envio.get("evento_transicao"),
-        contexto_envio.get("id_hash_msg_bot"),
+        referencia_wamid(contexto_envio.get("id_hash_msg_bot")),
         turnos_sem_avanco,
     )
 

@@ -265,6 +265,50 @@ class WorkerPostgresTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 return post_flow.responder_post_webhook(req)
 
+    def test_log_do_webhook_e_do_worker_seguem_a_mesma_linha_apos_commit(self):
+        import re
+        from callback.webhook.services import post_flow
+
+        eventos = []
+        def observar(formato, *args):
+            texto = formato % args
+            evento = texto.partition(" |")[0]
+            if evento in {"fila_insert_ok", "mensagem_processando", "mensagem_processada"}:
+                chave = int(re.search(r"\bid_mensagem=(\d+)", texto)[1])
+                # Outra conexão só vê a mudança se o commit já aconteceu.
+                linha = self.adm.execute("SELECT status FROM chatbot.fila_mensagens WHERE id_mensagem=%s",
+                                        (chave,)).fetchone()
+                eventos.append((evento, chave, linha))
+
+        with patch.object(post_flow.fila_logger, "info", side_effect=observar), \
+             patch.object(runtime.logger, "info", side_effect=observar):
+            self.postar_webhook("5511999990000", None, None, "wamid.teste.log")
+            self.ciclo()
+            self.postar_webhook("5511999990000", None, None, "wamid.teste.log")
+        chave, = self.adm.execute("SELECT id_mensagem FROM chatbot.fila_mensagens").fetchone()
+        self.assertEqual(eventos, [
+            ("fila_insert_ok", chave, ("pending",)),
+            ("mensagem_processando", chave, ("processing",)),
+            ("mensagem_processada", chave, ("sent",)),
+        ])
+
+    def test_recibo_failed_sem_rota_registra_codigo_sem_conteudo_do_cliente(self):
+        from callback.webhook.services import post_flow
+        from core.logging_config import referencia_wamid
+
+        data = {"entry": [{"id": "waba-falsa", "changes": [{"value": {"metadata": {"phone_number_id": "999"}}}]}]}
+        status = {"id": "wamid.resposta.privada", "errors": [{"code": 131026, "message": "texto privado"}]}
+        with patch.object(post_flow, "get_conn", side_effect=lambda **kw: psycopg.connect(self.dsn)), \
+             patch.object(post_flow.logger, "warning") as aviso:
+            post_flow._registrar_falha_entrega(data, status)
+        formato, *args = aviso.call_args.args
+        texto = formato % tuple(args)
+        self.assertIn("codigos_meta=131026", texto)
+        self.assertIn("recuperacao=nao_aplicavel", texto)
+        self.assertIn("ref_envio=" + referencia_wamid(status["id"]), texto)
+        self.assertNotIn("texto privado", texto)
+        self.assertNotIn(status["id"], texto)
+
     def test_oito_combinacoes_do_webhook_assinado_ate_o_primeiro_envio(self):
         from itertools import product
         for n, (tem_wa, tem_uid, tem_username) in enumerate(product((False, True), repeat=3)):

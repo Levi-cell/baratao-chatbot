@@ -13,10 +13,11 @@ def inserir_entrada_fila(dados, cursor):
             user_id_origem,username_origem,id_hash_msg,received_data_hora,tipo_mensagem,
             conteudo_texto,interativo,status,retry_count,next_attempt_at)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        ON CONFLICT (id_hash_msg) DO NOTHING
+        ON CONFLICT (id_hash_msg) DO NOTHING RETURNING id_mensagem
     """,(dados["id_central"],dados["id_cliente"],dados["cliente_telefone"],
          dados.get("user_id_origem"),dados.get("username_origem"),dados["id_hash_msg"],
          dados["received_data_hora"],dados["tipo_mensagem"],dados["conteudo_texto"],
          Jsonb(dados["interativo"]) if dados.get("interativo") else None,
          dados["status"],dados["retry_count"],dados["next_attempt_at"]))
-    return cursor.rowcount
+    linha = cursor.fetchone()
+    return linha[0] if linha else None

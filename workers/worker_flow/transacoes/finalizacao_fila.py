@@ -32,18 +32,6 @@ def finalizar_mensagem_processada(
 
     marcar_mensagem_como_enviada(mensagem["id_mensagem"], cursor)
 
-    logger.info(
-        "mensagem_processada | acao=marcar_sent id_mensagem=%s cliente=%s phone_number_id=%s id_unidade=%s id_conversa=%s estado=%s lock_version=%s atendimento_encerrado=%s",
-        mensagem["id_mensagem"],
-        short_value(mensagem["cliente_telefone"]),
-        short_value(mensagem["id_phone_unidade"]),
-        contexto_banco["id_unidade"],
-        id_conversa,
-        contexto_conversa["estado"],
-        lock_version,
-        resultado_encerramento["atendimento_encerrado"],
-    )
-
     return resultado_encerramento
 
 

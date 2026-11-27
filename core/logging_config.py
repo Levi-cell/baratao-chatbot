@@ -1,9 +1,17 @@
+import hashlib
 import logging
 import sys
 
 
 LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(name)-32s | %(filename)s:%(lineno)d | %(message)s"
 DATE_FORMAT = "%H:%M:%S"
+
+
+def referencia_wamid(wamid):
+    """Correlaciona envio e recibo sem expor o identificador da Meta no log."""
+    if not wamid:
+        return "-"
+    return hashlib.sha256(str(wamid).encode("utf-8")).hexdigest()[:16]
 
 
 def setup_logging(level=logging.INFO):

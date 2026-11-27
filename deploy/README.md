@@ -65,6 +65,7 @@ O Gunicorn escuta somente em `127.0.0.1:8000`; apenas o Nginx recebe trafego
 publico.
 
 ```bash
+sudo install -m 0644 /opt/chatbot/app/deploy/nginx/chatbot-log-format.conf /etc/nginx/conf.d/chatbot-log-format.conf
 sudo install -m 0644 /opt/chatbot/app/deploy/nginx/chatbot.conf /etc/nginx/sites-available/chatbot
 sudoedit /etc/nginx/sites-available/chatbot
 sudo ln -sfn /etc/nginx/sites-available/chatbot /etc/nginx/sites-enabled/chatbot

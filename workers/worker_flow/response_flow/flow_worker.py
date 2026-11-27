@@ -11,7 +11,7 @@ from core.database.connection_aws import get_conn
 from core.integrations.whatsapp.exceptions import ErroEnvioMeta
 from core.integrations.whatsapp.pywa_functions.cliente import antes_do_primeiro_envio
 from core.integrations.whatsapp.pywa_functions.digitacao import indicar_digitacao
-from core.logging_config import short_value
+from core.logging_config import referencia_wamid, short_value
 from core.repositories.atendimento.conversas import tentar_lock_conversa
 from core.repositories.atendimento.locks import (
     LockConversaPerdido,
@@ -71,8 +71,7 @@ def worker_flow():
     retry_delay = 5
 
     while True:
-        print("\n\n\n---------------------NOVO CICLO---------------------\n\n\n")
-        logger.info("---------- ciclo_worker_inicio ----------")
+        logger.debug("ciclo_worker_inicio")
 
         conn_ciclo = None
         cursor_ciclo = None
@@ -240,12 +239,12 @@ def worker_flow():
                 raise
 
             logger.debug(
-                "resposta_bot_contexto_final_ok | acao=commit id_mensagem=%s id_conversa=%s etapa=%s resposta_ja_existia=%s id_hash_msg_bot=%s tratamento=%s tipo_tratamento=%s",
+                "resposta_bot_contexto_final_ok | acao=commit id_mensagem=%s id_conversa=%s etapa=%s resposta_ja_existia=%s ref_envio=%s tratamento=%s tipo_tratamento=%s",
                 mensagem["id_mensagem"],
                 id_conversa,
                 contexto_final["id_etapa_resultante"],
                 contexto_final["resposta_ja_existia"],
-                contexto_final["id_hash_msg_bot"],
+                referencia_wamid(contexto_final["id_hash_msg_bot"]),
                 contexto_envio.get("tratamento", False),
                 contexto_envio.get("tipo_tratamento"),
             )
@@ -263,6 +262,17 @@ def worker_flow():
             if resultado_encerramento is None:
                 raise RuntimeError("Finalização da mensagem sem resultado de encerramento")
 
+            logger.info(
+                "mensagem_processada | status=sent id_mensagem=%s id_central=%s id_conversa=%s "
+                "etapa=%s evento=%s tentativa=%s ref_envio=%s lock_version=%s atendimento_encerrado=%s "
+                "movimento=%s turnos_sem_avanco=%s resposta_ja_existia=%s",
+                mensagem["id_mensagem"], contexto_banco["id_central"], id_conversa,
+                contexto_final["id_etapa_resultante"], contexto_envio.get("evento_transicao"), mensagem["retry_count"],
+                referencia_wamid(contexto_final.get("id_hash_msg_bot")), lock_version,
+                resultado_encerramento["atendimento_encerrado"],
+                contexto_final.get("movimento_conversa"), contexto_final.get("turnos_sem_avanco"),
+                contexto_final["resposta_ja_existia"],
+            )
             registrar_cache_bloqueio_apos_commit(
                 mensagem,
                 resultado_encerramento,
@@ -315,17 +325,17 @@ def worker_flow():
             if isinstance(erro.__cause__, LockConversaPerdido):
                 conn_ciclo.rollback()
                 logger.critical(
-                    "meta_confirmou_com_lock_perdido | conversa=%s hash=%s risco=duplicidade",
+                    "meta_confirmou_com_lock_perdido | id_conversa=%s ref_envio=%s risco=duplicidade",
                     erro.id_conversa,
-                    erro.id_hash_msg_bot,
+                    referencia_wamid(erro.id_hash_msg_bot),
                 )
                 continue
             logger.critical(
-                "banco_falhou_apos_envio_meta | risco=resposta_duplicada acao=reagendar_sem_sent id_mensagem=%s id_conversa=%s etapa=%s id_hash_msg_bot=%s tratamento=%s tipo_tratamento=%s erro=%s",
+                "banco_falhou_apos_envio_meta | risco=resposta_duplicada acao=reagendar_sem_sent id_mensagem=%s id_conversa=%s etapa=%s ref_envio=%s tratamento=%s tipo_tratamento=%s erro=%s",
                 erro.id_mensagem,
                 erro.id_conversa,
                 erro.id_etapa,
-                erro.id_hash_msg_bot,
+                referencia_wamid(erro.id_hash_msg_bot),
                 contexto_envio.get("tratamento", False),
                 contexto_envio.get("tipo_tratamento"),
                 erro,

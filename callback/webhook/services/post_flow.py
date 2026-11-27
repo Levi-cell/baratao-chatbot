@@ -20,7 +20,7 @@ from core.cache.cache_unidade import (
     unidade_esta_ativa,
 )
 from core.database.connection_aws import get_conn
-from core.logging_config import short_value
+from core.logging_config import referencia_wamid, short_value
 from .bloqueio_meta_guard import (
     verificar_protecao_remetente,
 )
@@ -38,8 +38,6 @@ TIPO_EVENTO_DESCONHECIDO = "unknown"
 
 
 def responder_post_webhook(request):
-    print("\n\n\n-----------------------------------------------------------------NOVO EVENTO-----------------------------------------------------------------\n\n\n")
-
     if resposta := _validar_content_type(request):
         return resposta
 
@@ -152,14 +150,7 @@ def _processar_evento(request,data):
                 "reason": preparacao_fila["reason"],
             }
 
-        if resultado_fila["status"] == "inserted":
-            logger.info(
-                "request_processado | status=enfileirado acao=fila_insert cliente=%s phone_number_id=%s",
-                short_value(cliente_telefone),
-                short_value(phone_number_id),
-            )
-
-        elif resultado_fila["status"] == "ignored":
+        if resultado_fila["status"] == "ignored":
             logger.info(
                 "mensagem_ignorada | motivo=%s acao=nao_enfileirar cliente=%s phone_number_id=%s",
                 resultado_fila["reason"],
@@ -167,7 +158,7 @@ def _processar_evento(request,data):
                 short_value(phone_number_id),
             )
 
-        else:
+        elif resultado_fila["status"] != "inserted":
             logger.error(
                 "request_indisponivel | motivo=%s acao=retornar_503_para_reentrega cliente=%s phone_number_id=%s",
                 resultado_fila["reason"],
@@ -275,36 +266,64 @@ def _classificar_evento_meta(data):
 
 
 def _registrar_status_identidade(data):
-    from core.repositories.atendimento.identidade_cliente import (
-        atualizar_username_por_recibo, buscar_central, falha_da_rota_atual,
-    )
-    from core.repositories.atendimento.fallback_contato import reservar_reconfirmacao
+    from core.repositories.atendimento.identidade_cliente import atualizar_username_por_recibo, buscar_central
     valor = _extrair_value(data)
     status = valor["statuses"][0]
     tipo = status.get("status")
     if tipo not in {"delivered", "read", "failed"} or not status.get("id"):
         return JsonResponse({"status":"ok"})
-    if tipo != "failed":
-        try:
-            identidade = extrair_identidade(valor, {"from": status.get("recipient_id"),
-                                                    "from_user_id": status.get("recipient_user_id")})
-            observado_em = datetime.fromtimestamp(int(status["timestamp"]), timezone.utc)
-        except (KeyError, ValueError, TypeError, OverflowError, OSError):
-            return JsonResponse({"status": "ignored"})
-        if not identidade.username:
-            return JsonResponse({"status": "ok"})
-    # Um failed genérico não autoriza troca de destinatário. Só há reserva se a
-    # rota antiga já foi suspensa por evento de identidade assinado e correlacionado.
+    if tipo == "failed":
+        _registrar_falha_entrega(data, status)
+        return JsonResponse({"status": "ok"})
+
+    logger.debug("recibo_meta | status=%s ref_envio=%s", tipo, referencia_wamid(status["id"]))
+    try:
+        identidade = extrair_identidade(valor, {"from": status.get("recipient_id"),
+                                                "from_user_id": status.get("recipient_user_id")})
+        observado_em = datetime.fromtimestamp(int(status["timestamp"]), timezone.utc)
+    except (KeyError, ValueError, TypeError, OverflowError, OSError):
+        return JsonResponse({"status": "ignored"})
+    if not identidade.username:
+        return JsonResponse({"status": "ok"})
     with get_conn(application_name="webhook_status") as conn, conn.cursor() as cursor:
-        central = buscar_central(_extrair_phone_number_id(data),data["entry"][0].get("id"),cursor)
-        if central and tipo != "failed":
+        central = buscar_central(_extrair_phone_number_id(data), data["entry"][0].get("id"), cursor)
+        if central:
             atualizar_username_por_recibo(central[0], status["id"], identidade.user_id,
-                                         identidade.wa_id, identidade.username, observado_em, cursor)
-            return JsonResponse({"status": "ok"})
-        tentativa = falha_da_rota_atual(central[0],status["id"],cursor) if central else None
-        if tentativa and tentativa[3]:
-            reservar_reconfirmacao(tentativa[0],tentativa[1],status["id"],cursor)
-    return JsonResponse({"status":"ok"})
+                                          identidade.wa_id, identidade.username, observado_em, cursor)
+    return JsonResponse({"status": "ok"})
+
+
+def _registrar_falha_entrega(data, status):
+    from core.repositories.atendimento.identidade_cliente import buscar_central, falha_da_rota_atual
+    from core.repositories.atendimento.fallback_contato import reservar_reconfirmacao
+
+    central = tentativa = None
+    recuperacao = "verificacao_inconclusiva"
+    try:
+        with get_conn(application_name="webhook_status") as conn, conn.cursor() as cursor:
+            central = buscar_central(_extrair_phone_number_id(data), data["entry"][0].get("id"), cursor)
+            tentativa = falha_da_rota_atual(central[0], status["id"], cursor) if central else None
+            resultado = "nao_aplicavel"
+            # Só a suspensão confirmada da rota autoriza a reconfirmação.
+            if tentativa and tentativa[3]:
+                nova = reservar_reconfirmacao(tentativa[0], tentativa[1], status["id"], cursor)
+                resultado = "reservada" if nova else "ja_reservada"
+        recuperacao = resultado  # O contexto da conexão já confirmou a transação.
+    finally:
+        erros = status.get("errors")
+        codigos = []
+        if isinstance(erros, list):
+            for erro in erros:
+                codigo = str(erro.get("code", "")) if isinstance(erro, dict) else ""
+                if codigo.isascii() and codigo.isdecimal():
+                    codigos.append(codigo)
+        logger.warning(
+            "entrega_meta_falhou | ref_envio=%s codigos_meta=%s id_central=%s "
+            "id_mensagem=%s id_conversa=%s recuperacao=%s",
+            referencia_wamid(status["id"]), ",".join(codigos) or "-",
+            central[0] if central else "-", tentativa[1] if tentativa else "-",
+            tentativa[0] if tentativa else "-", recuperacao,
+        )
 
 
 def _executar_transacao_fila(dados):
@@ -318,10 +337,8 @@ def _executar_transacao_fila(dados):
 
         if resultado["status"] == "inserted":
             fila_logger.info(
-                "fila_insert_ok | acao=enfileirar id_msg=%s cliente=%s phone_number_id=%s tipo=%s",
-                short_value(dados["id_hash_msg"]),
-                short_value(dados["cliente_telefone"]),
-                short_value(dados["id_phone_unidade"]),
+                "fila_insert_ok | status=enfileirado id_mensagem=%s id_central=%s tipo=%s",
+                resultado["id_mensagem"], dados["id_central"],
                 dados["tipo_mensagem"],
             )
 

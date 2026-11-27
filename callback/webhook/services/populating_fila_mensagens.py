@@ -101,9 +101,9 @@ def inserir_dados_na_tabela_fila(dados, cursor):
             return {"status": "ignored", "reason": "contato_exige_conciliacao"}
         dados["id_cliente"] = canonica
 
-    linhas_inseridas = inserir_entrada_fila(dados, cursor)
+    id_mensagem = inserir_entrada_fila(dados, cursor)
 
-    if linhas_inseridas == 0:
+    if id_mensagem is None:
         if canonica and canonica != cliente:
             raise IdentidadeDivergente("Conciliação revertida por reentrega concorrente.")
         logger.info(
@@ -120,6 +120,7 @@ def inserir_dados_na_tabela_fila(dados, cursor):
     return {
         "status": "inserted",
         "reason": None,
+        "id_mensagem": id_mensagem,
     }
 
 
