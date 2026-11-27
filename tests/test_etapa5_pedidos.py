@@ -114,8 +114,8 @@ class EtapaPedidosTests(unittest.TestCase):
 
     def test_universal_tem_prioridade_na_etapa5(self):
         for entrada, tipo, turnos, evento in (
-            ("1.09", "text", 3, "limite_sem_avanco"), ("humano, pedido 12.09", "text", 0, "humano_solicitado"),
-            (None, "document", 0, "midia_recebida"),
+            ("1.99", "text", 3, "limite_sem_avanco"), ("humano, pedido 12.09", "text", 0, "humano_solicitado"),
+            (None, "document", 3, "limite_sem_avanco"),
         ):
             envio = flow_sender(contexto_pedidos(entrada, tipo=tipo, turnos=turnos))
             self.assertEqual((envio["evento_transicao"], envio["id_etapa_resultante"]), (evento, 7))

@@ -7,7 +7,7 @@ cd /opt/chatbot/app
 sudo -u chatbot bash deploy/testar_ubuntu.sh
 ```
 
-O script usa `pg_virtualenv` para criar um cluster temporário. As duas suítes que recriam o schema usam bancos separados nesse cluster. O processo recebe credenciais de ensaio e usa transporte Meta simulado. É possível selecionar outro ambiente Python com `BARATAO_PYTHON`. [Script](deploy/testar_ubuntu.sh)
+O script usa `pg_virtualenv` para criar um cluster temporário. Os testes de fluxo, consumo e Django Admin usam três bancos separados nesse cluster. O processo recebe credenciais de ensaio e usa transporte Meta simulado. É possível selecionar outro ambiente Python com `BARATAO_PYTHON`. [Script](deploy/testar_ubuntu.sh)
 
 ## Serviços e certificado
 

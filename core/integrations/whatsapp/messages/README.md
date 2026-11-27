@@ -13,3 +13,5 @@ O [roteiro do pós-venda](<../../../../baratão moveis.md>) define o texto mostr
 | 7 | [Encaminhamento ao pós-venda](encaminhamento_pos_venda.py) |
 
 A [solicitação de compartilhamento de contato](compartilhamento_contato.py) intervém quando o fluxo precisa confirmar o telefone. O tratamento universal usa o mesmo encaminhamento final, com os dados coletados até aquele turno.
+
+O [aviso de mídia](tratamentos/midia.py) acompanha a pergunta da etapa e os controles interativos correspondentes. A quarta resposta consecutiva inválida usa o encaminhamento final.

@@ -73,14 +73,7 @@ DB_SSLROOTCERT=/etc/ssl/certs/aws-rds-global-bundle.pem
 PGSSLCERTMODE=disable
 REDIS_HOST=ENDPOINT_DO_REDIS_REMOTO
 META_GRAPH_API_VERSION=27.0
-FUNIL_WORKER_ENABLED=True
 ```
-
-O follow-up é habilitado pela própria unit, sem segredo adicional. Seus padrões
-são `FOLLOWUP_WORKER_ENABLED=true`, `FOLLOWUP_POLL_SECONDS=60` e
-`FOLLOWUP_BATCH_SIZE=20`. Se alguma dessas chaves estiver neste arquivo, seu
-valor prevalece sobre `Environment=` da unit. Preserve uma desativação
-intencional ao trocar o ambiente; ativação do proativo exige flow compatível.
 
 Os demais tokens, IDs, senhas e endpoints devem conter os valores reais do
 ambiente, sem serem enviados ao GitHub.
@@ -192,7 +185,7 @@ Não instale o arquivo se esse preflight terminar com erro.
 
 ### 6. Aplicar e recuperar o ambiente
 
-Registrar os serviços ativos. Após validar o arquivo temporário, pausar os processos afetados na ordem da [rotina de manutenção](rotina_deploy.md). Instalar o arquivo com proprietário `root:chatbot` e modo `0640`. Um processo lê o `EnvironmentFile` ao iniciar. Para carregar novas variáveis, reiniciar cada serviço afetado, incluindo os workers de consulta, origem e consumo quando usam a configuração alterada. Restaurar apenas os serviços anteriormente ativos e conferir logs e conectividade. Guardar o backup restrito. Em caso de erro, reinstalar o backup validado com o mesmo proprietário e permissões e repetir a retomada.
+Registrar os serviços ativos. Após validar o arquivo temporário, pausar os processos afetados na ordem da [rotina de manutenção](rotina_deploy.md). Instalar o arquivo com proprietário `root:chatbot` e modo `0640`. Um processo lê o `EnvironmentFile` ao iniciar. Para carregar novas variáveis, reiniciar cada serviço afetado, incluindo os workers de fluxo e de consumo quando usam a configuração alterada. Restaurar apenas os serviços anteriormente ativos e conferir logs e conectividade. Guardar o backup restrito. Em caso de erro, reinstalar o backup validado com o mesmo proprietário e permissões e repetir a retomada.
 
 ### Erros conhecidos de ambiente
 

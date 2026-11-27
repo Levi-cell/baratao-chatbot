@@ -2,11 +2,11 @@
 
 O banco continua sendo `db_chatbot` e os objetos da aplicação continuam no schema `chatbot`. A estrutura de negócio pertence ao SQL versionado. O Django administra suas tabelas de usuários, permissões e sessões. A configuração da conexão permanece em `connection_aws.py`.
 
-## Catálogo vigente em 26/11/2026
+## Catálogo de produção
 
 A base que concluiu a migração de nove etapas com WAAC e BSUID recebe o [SQL incremental das sete etapas](../../deploy/migrations/20261126_baratao_sete_etapas.sql). Com a aplicação parada, executar o arquivo completo no DBeaver. A consulta final retorna IDs de 1 a 7, 28 transições, detalhes (6), encaminhamento (7) e 90 dias.
 
-Na sequência, executar o [SQL de recoleta do titular](../../deploy/migrations/20261126_recoleta_titular.sql). A conferência vigente retorna 7 etapas, 27 transições e `pula_cpf=false`.
+Na sequência, executar o [SQL de recoleta do titular](../../deploy/migrations/20261126_recoleta_titular.sql). A recoleta deixa 27 transições e `pula_cpf=false`. Depois, a [migração da Beta V0.2.0](../../deploy/migrations/20261127_midia_repete_etapa.sql) retira as seis arestas de mídia para a etapa final. O catálogo vigente tem 7 etapas e 21 transições.
 
 O motivo histórico `visita_pendente` continua com retorno imediato. Os registros dos antigos encaminhamentos preservam a data de encerramento. A solicitação de contato por BSUID retoma a etapa equivalente. Instalações novas usam diretamente o schema e o catálogo atuais. Para uma base anterior ao WAAC, aplicar primeiro o [consolidado de nove etapas](../../deploy/migrations/20261126_pendencias_baratao_etapas_sequenciais.sql).
 
@@ -63,7 +63,7 @@ O chat identifica o par cliente e central. Cada chat pode ter várias conversas 
 
 A fila preserva a reserva, o vencimento de uma reserva abandonada e a ordenação dos turnos na mesma central. O banco mantém o lock com versão, o vínculo de cada resposta ao WAMID de entrada e a versão de cache das centrais. O encaminhamento para dois setores grava um único carrossel e seu WAMID.
 
-As dependências do worker para saudação, etapas 1 e 2 e encerramento foram adaptadas. Nome e CPF são persistidos globalmente em `cliente` e na cópia de `atendimento_pos_venda`, na mesma transação da resposta e da transição. Produto já é persistido em `atendimento_pos_venda` na transição 3 → 4. O assunto é salvo na mesma tabela na transição 4 → 5. A etapa 5 grava os pedidos de cada conversa ou a perda da nota e segue para 6. O worker e a seção Consumo já usam a central e o schema de varejo. O webhook completo, o processamento da resposta de visita ou detalhes, as etapas seguintes e as demais consultas do painel ainda precisam ser adaptados ao [fluxo de pós-venda](<../../baratão moveis.md>) antes da operação.
+O worker grava nome e CPF no cadastro global e no atendimento da conversa. Salva o produto na passagem de 3 para 4, o assunto de 4 para 5 e os pedidos ou a perda da nota de 5 para 6. Em seguida grava o relato e finaliza na etapa 7. Um encaminhamento antecipado usa as informações já coletadas. O webhook, o worker e a seção Consumo operam sobre o schema de varejo. Algumas métricas legadas do painel ainda dependem de adaptação. [Fluxo do pós-venda](<../../baratão moveis.md>)
 
 
 ## Atualização da etapa 1 e bloqueio de 90 dias

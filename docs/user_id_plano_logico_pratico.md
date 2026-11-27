@@ -1,17 +1,17 @@
 # Identidade WhatsApp do cliente e da central no Baratão
 
-**Implementação presente na base local em 26/11/2026.** Cada passo traz o conteúdo integral de um arquivo, incluindo imports, funções preexistentes e código novo. Os caminhos partem da raiz do Chatbot. Aplicar os arquivos como um conjunto em homologação. O SQL de instalação e as migrações atendem ambientes diferentes. [Regras do atendimento](user_id_plano_logico_teorico.md)
+**Implementação do Baratão na Beta V0.2.0.** Cada passo traz o conteúdo integral de um arquivo, incluindo imports, funções preexistentes e código novo. Os caminhos partem da raiz do Chatbot. Aplicar os arquivos como um conjunto em homologação. O SQL de instalação e as migrações atendem ambientes diferentes. [Regras do atendimento](user_id_plano_logico_teorico.md)
 
 ## Antes de publicar
 
 - A Graph API usada pelo cliente de saída vem de META_GRAPH_API_VERSION. O ambiente local usa 27.0. Cada campo do webhook tem a versão escolhida separadamente no painel da Meta.
-- Para instalação nova, usar o DDL e o catálogo vigentes. Na base de 25/11 que já contém as filiais, parar webhook e workers e executar o [SQL consolidado](../deploy/migrations/20261126_pendencias_baratao_etapas_sequenciais.sql). Ele inclui os dois complementos de identidade registrados nos passos 2 e 3 e renumera as etapas. Para o fluxo atual, aplicar em seguida o [SQL de sete etapas](../deploy/migrations/20261126_baratao_sete_etapas.sql). Em seguida aplicar a [migração de recoleta do titular](../deploy/migrations/20261126_recoleta_titular.sql). Em toda nova conversa, nome e CPF são confirmados novamente. A solicitação de contato aberta acompanha a renumeração.
+- Para instalação nova, usar o DDL e o catálogo vigentes. Na base de 25/11 que já contém as filiais, parar webhook e workers e executar o [SQL consolidado](../deploy/migrations/20261126_pendencias_baratao_etapas_sequenciais.sql). Ele inclui os dois complementos de identidade registrados nos passos 2 e 3 e renumera as etapas. Para o fluxo atual, aplicar em seguida o [SQL de sete etapas](../deploy/migrations/20261126_baratao_sete_etapas.sql). Em seguida aplicar a [migração de recoleta do titular](../deploy/migrations/20261126_recoleta_titular.sql). Em toda nova conversa, nome e CPF são confirmados novamente. A solicitação de contato aberta acompanha a renumeração. Partindo do catálogo de 27 transições, aplicar a [migração de repetição por mídia](../deploy/migrations/20261127_midia_repete_etapa.sql). O botão de contato também se repete quando chega mídia.
 - A central usa seu WABA ID como Messaging Account ID. Na URL, o Phone Number ID continua disponível durante a transição. Usar um WAAC ID somente após obtê-lo da Meta para aquela central e comprovar acesso do token. O cronograma publicado prevê o novo identificador na fase de 2027 e a transição obrigatória na fase do primeiro semestre de 2028. [Modelo de contas](https://developers.facebook.com/documentation/business-messaging/whatsapp/account-model-evolution/) · [Seleção de conta de mensagens](https://developers.facebook.com/documentation/business-messaging/whatsapp/account-model-evolution/messaging/)
 - O atendimento conserva a numeração nome 1, CPF 2 e produto 3. O botão nativo fica entre nome e CPF quando falta o telefone. O quarto erro de compartilhamento encaminha ao pós-venda. Prova válida no quarto turno retoma a etapa. A troca de BSUID assinalada pela Meta suspende a rota telefônica anterior. A próxima interação válida para atendimento permite a reconfirmação dentro da janela. Recibo genérico de falha ou timeout segue a política de erro existente. [Contrato de BSUID e contato](https://developers.facebook.com/documentation/business-messaging/whatsapp/business-scoped-user-ids)
 - A origem de cada contato deve vir de webhook autenticado. A confirmação de contato exige a mesma conversa, BSUID, solicitação em aberto e cartão com origem contact_request. Se o cartão oficial revelar um cadastro antigo, reconciliar sob lock quando o chat antigo estiver livre, respeitando bloqueios e mantendo a conversa do provisório. O prazo de bloqueio por encaminhamento continua interno e não aciona bloqueio remoto.
 - A desativação administrativa usa o campo ativa da central. O worker preserva a mensagem pendente se a central for suspensa durante o turno. O passo do flow_worker documenta a sequência de locks, commits, rollback e recuperação.
 - O parâmetro messaging_account_id escolhe a conta de mensagens. A Meta pode determiná-la quando o token só alcança uma conta no número. Se o token alcançar várias, informar a conta explicitamente, inclusive durante o período de transição. O WAAC ID usado no caminho da URL identifica outro recurso.
-- O ensaio inclui PostgreSQL local descartável, webhook com HMAC, variação dos três campos de identidade, recuperação do worker e transporte HTTP simulado com Phone Number ID e WAAC. A publicação exige o SQL consolidado no RDS e a ativação da central em operação. [Cronograma e critérios de aceite](../CRONOGRAMA_META_2027_2028.md)
+- O ensaio inclui PostgreSQL local descartável, webhook com HMAC, variação dos três campos de identidade, recuperação do worker e transporte HTTP simulado com Phone Number ID e WAAC. Instalações existentes devem aplicar as migrações correspondentes ao estado do seu catálogo. [Cronograma e critérios de aceite](../CRONOGRAMA_META_2027_2028.md)
 - O aceite de produção inclui entrega e clique no aparelho, recebimento no callback e conferência das permissões e dos IDs reais por central. A migração geral do painel varejista e dos relatórios herdados é trabalho separado. Algumas consultas de métricas ainda referenciam estruturas do Supera. As seis etapas de coleta e a etapa 7 de encaminhamento utilizam o contexto do varejo.
 
 ## 1. `core/database/deploy_database/schema.sql` (alterar)
@@ -4128,23 +4128,24 @@ def escolher_destinatario(wa_id_confirmado, bsuid_vigente, contato_pendente):
 ## 33. `workers/worker_flow/response_flow/etapas/resolver_compartilhamento.py` (criar)
 
 ```python
-from core.validacoes.encaminhamento_pos_venda import LIMITE_TURNOS_SEM_AVANCO
+from core.validacoes.encaminhamento_pos_venda import LIMITE_TURNOS_SEM_AVANCO, pediu_humano
 
 def acao_contato(*, solicitacao_enviada, telefone_provado, tipo, texto, erros_cliente):
     if not solicitacao_enviada:
         return "solicitar"
     if telefone_provado:
         return "confirmar_e_retomar"
-    if tipo not in {"text", "interactive", "button"}:
-        return "midia_recebida"
-    if tipo == "text" and "humano" in (texto or "").casefold():
+    if pediu_humano(tipo, texto):
         return "humano_solicitado"
     if erros_cliente >= LIMITE_TURNOS_SEM_AVANCO:
         return "limite_sem_avanco"
+    if tipo not in {"text", "interactive", "button"}:
+        return "repetir_por_midia"
     return "repetir_botao"
 
 
 from core.etapas_pos_venda import ETAPA_CPF, ETAPA_PRODUTO, ETAPA_ASSUNTO, ETAPA_PEDIDOS, ETAPA_DETALHES, ETAPA_NOME, ETAPA_ENCAMINHAMENTO
+from core.integrations.whatsapp.messages.tratamentos.midia import avisar_sobre_midia
 from core.integrations.whatsapp.messages.compartilhamento_contato import mensagem_contato, primeiro_nome
 from core.integrations.whatsapp.messages.etapa2_messages import montar_mensagem_etapa2
 from core.integrations.whatsapp.pywa_functions.pywa_senders.compartilhamento_contato import enviar_solicitacao
@@ -4159,11 +4160,13 @@ from workers.worker_flow.response_flow.transicoes.resolver_transicao import reso
 from core.validacoes.compartilhamento_contato import telefone_compartilhado
 
 
-def pedir(contexto, etapa, nome, *, repetir=False, reconfirmar=False):
+def pedir(contexto, etapa, nome, *, repetir=False, reconfirmar=False, midia=False):
     uid = contexto["bsuid_vigente"]
     phone = contexto["central"]["phone_number_id"]
     texto = mensagem_contato(nome, repeticao=repetir, reconfirmacao=reconfirmar,
                              abertura=contexto.get("apresentacao_pendente", False))
+    if midia:
+        texto = avisar_sobre_midia(texto)
     envio = enviar_solicitacao(uid, phone, texto, etapa)
     return dict(envio, operacao_contato="repetir" if repetir else "abrir",
                 motivo_contato="reconfirmacao" if reconfirmar else "cadastro",
@@ -4196,8 +4199,8 @@ def resolver_turno_contato(ctx):
                 envio = senders[etapa](prova, phone)
         return dict(envio, operacao_contato="confirmar", bsuid_contato=uid, telefone_provado=prova,
                     tipo_destinatario="wa_id", valor_destinatario=prova)
-    if acao == "repetir_botao":
-        return pedir(ctx, etapa, nome, repetir=True)
+    if acao in {"repetir_botao", "repetir_por_midia"}:
+        return pedir(ctx, etapa, nome, repetir=True, midia=acao == "repetir_por_midia")
     destino = resolver_destino_transicao(ctx, acao, destinos_esperados={ETAPA_ENCAMINHAMENTO})
     envio = enviar_encaminhamento(ctx, acao)
     envio["operacao_contato"] = "encerrar"
@@ -4213,7 +4216,7 @@ from core.etapas_pos_venda import ETAPA_CPF
 from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa1 import enviar_etapa1, enviar_nome_invalido
 from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa2 import enviar_etapa2
 from workers.worker_flow.response_flow.etapas.validadores_contexto.valida_etapa1 import validar_contexto_etapa1
-from workers.worker_flow.response_flow.tratamento_universal_pos_venda import resolver_tratamento_universal
+from workers.worker_flow.response_flow.tratamento_universal_pos_venda import repetir_etapa, resolver_tratamento_universal
 from workers.worker_flow.response_flow.transicoes.resolver_transicao import (
     resolver_destino_transicao, anexar_transicao_ao_contexto_envio,
 )
@@ -4236,7 +4239,7 @@ def resolve_etapa1(contexto_historico):
         return tratamento
     validacao = validar_contexto_etapa1(contexto_historico)
     if validacao is None:
-        return enviar_nome_invalido(destinatario, remetente)
+        return repetir_etapa(contexto_historico, enviar_nome_invalido, destinatario, remetente)
 
     evento = validacao["evento"]
     destino = resolver_destino_transicao(contexto_historico, evento, destinos_esperados={ETAPA_CPF})
@@ -4261,7 +4264,7 @@ from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa2 import (
 )
 from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa3 import enviar_etapa3
 from workers.worker_flow.response_flow.etapas.validadores_contexto.valida_etapa2 import validar_contexto_etapa2
-from workers.worker_flow.response_flow.tratamento_universal_pos_venda import resolver_tratamento_universal
+from workers.worker_flow.response_flow.tratamento_universal_pos_venda import repetir_etapa, resolver_tratamento_universal
 from workers.worker_flow.response_flow.transicoes.resolver_transicao import (
     resolver_destino_transicao, anexar_transicao_ao_contexto_envio,
 )
@@ -4281,7 +4284,7 @@ def resolve_etapa2(contexto_historico):
         return tratamento
     validacao = validar_contexto_etapa2(contexto_historico)
     if validacao is None:
-        return enviar_cpf_invalido(destinatario, remetente)
+        return repetir_etapa(contexto_historico, enviar_cpf_invalido, destinatario, remetente)
 
     evento = validacao["evento"]
     destino = resolver_destino_transicao(
@@ -4300,7 +4303,7 @@ from core.etapas_pos_venda import ETAPA_ASSUNTO
 from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa3 import enviar_etapa3
 from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa4 import enviar_etapa4
 from workers.worker_flow.response_flow.etapas.validadores_contexto.valida_etapa3 import validar_contexto_etapa3
-from workers.worker_flow.response_flow.tratamento_universal_pos_venda import resolver_tratamento_universal
+from workers.worker_flow.response_flow.tratamento_universal_pos_venda import repetir_etapa, resolver_tratamento_universal
 from workers.worker_flow.response_flow.transicoes.resolver_transicao import (
     resolver_destino_transicao, anexar_transicao_ao_contexto_envio,
 )
@@ -4319,7 +4322,7 @@ def resolve_etapa3(contexto_historico):
         return tratamento
     validacao = validar_contexto_etapa3(contexto_historico)
     if validacao is None:
-        return enviar_etapa3(destinatario, remetente, invalido=True)
+        return repetir_etapa(contexto_historico, enviar_etapa3, destinatario, remetente, invalido=True)
     evento = validacao["evento"]
     destino = resolver_destino_transicao(contexto_historico, evento, destinos_esperados={ETAPA_ASSUNTO})
     envio = enviar_etapa4(destinatario, remetente)
@@ -4335,7 +4338,7 @@ from core.etapas_pos_venda import ETAPA_PEDIDOS
 from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa4 import enviar_etapa4
 from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa5_pedidos import enviar_etapa5_pedidos
 from workers.worker_flow.response_flow.etapas.validadores_contexto.valida_etapa4 import validar_contexto_etapa4
-from workers.worker_flow.response_flow.tratamento_universal_pos_venda import resolver_tratamento_universal
+from workers.worker_flow.response_flow.tratamento_universal_pos_venda import repetir_etapa, resolver_tratamento_universal
 from workers.worker_flow.response_flow.transicoes.resolver_transicao import (
     anexar_transicao_ao_contexto_envio, resolver_destino_transicao,
 )
@@ -4351,7 +4354,7 @@ def resolve_etapa4(contexto):
         return tratamento
     validacao = validar_contexto_etapa4(contexto)
     if validacao is None:
-        return enviar_etapa4(destinatario, remetente, invalido=True)
+        return repetir_etapa(contexto, enviar_etapa4, destinatario, remetente, invalido=True)
     evento = validacao["evento"]
     destino = resolver_destino_transicao(contexto, evento, destinos_esperados={ETAPA_PEDIDOS})
     envio = enviar_etapa5_pedidos(destinatario, remetente)
@@ -4367,7 +4370,7 @@ from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa5_pedidos impor
 from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa6_detalhes import enviar_etapa6_detalhes
 from core.validacoes.pedidos_pos_venda import transicao_dos_pedidos
 from workers.worker_flow.response_flow.etapas.validadores_contexto.valida_pedidos_etapa5 import validar_contexto_pedidos
-from workers.worker_flow.response_flow.tratamento_universal_pos_venda import resolver_tratamento_universal
+from workers.worker_flow.response_flow.tratamento_universal_pos_venda import repetir_etapa, resolver_tratamento_universal
 from workers.worker_flow.response_flow.transicoes.resolver_transicao import (
     resolver_destino_transicao, anexar_transicao_ao_contexto_envio,
 )
@@ -4383,7 +4386,7 @@ def resolve_etapa5_pedidos(contexto):
         return tratamento
     numeros, quantidade_informada = validar_contexto_pedidos(contexto)
     if numeros is None:
-        return enviar_etapa5_pedidos(destinatario, remetente, quantidade_para_correcao=quantidade_informada)
+        return repetir_etapa(contexto, enviar_etapa5_pedidos, destinatario, remetente, quantidade_para_correcao=quantidade_informada)
     evento, esperado = transicao_dos_pedidos(contexto["assunto"], perdeu_nota=not numeros)
     destino = resolver_destino_transicao(contexto, evento, destinos_esperados={esperado})
     envio = enviar_etapa6_detalhes(destinatario, remetente)
@@ -5419,7 +5422,7 @@ class AberturaDigitacaoTests(unittest.TestCase):
             self.processar(ctx)
         with patch.dict(os.environ, {"WHATSAPP_MIDIAS_BASE_URL": ""}):
             with self.assertRaises(ValueError):
-                self.processar(contexto(tipo="audio"))
+                self.processar(contexto(tipo="audio", turnos=3))
         self.assertEqual(self.ordem, [])
 
     def test_falha_opcional_de_digitacao_nao_impede_a_resposta(self):
@@ -5484,7 +5487,7 @@ def contexto(etapa=1, texto="123", tipo="text", turnos=0, apresentacao=False):
         "id_etapa_origem_transicao": etapa, "turnos_sem_avanco": turnos,
         "resposta_bot_para_mensagem_atual": None,
         "transicoes_permitidas": {
-            "nome_valido_falta_cpf": 2, "midia_recebida": 7,
+            "nome_valido_falta_cpf": 2,
             "humano_solicitado": 7, "limite_sem_avanco": 7,
         },
         "central": {"telefone_sofas": "557592087803", "telefone_moveis": "557582467000",
@@ -5536,7 +5539,8 @@ class Etapa1Tests(unittest.TestCase):
     def test_primeiro_contato_apresenta_regras_mesmo_com_midia_ou_humano(self):
         for tipo, texto in (("audio", None), ("image", None), ("text", "Quero um HUMANO"), ("text", "João da Silva")):
             envio = flow_sender(contexto(apresentacao=True, tipo=tipo, texto=texto, turnos=3))
-            self.assertRegex(envio["mensagem_bot"],r"^(Bom dia|Boa tarde|Boa noite)! Sou o Theo")
+            self.assertRegex(envio["mensagem_bot"], r"^(Bom dia|Boa tarde|Boa noite), eu sou o Theo")
+            self.assertEqual(envio["mensagem_bot"].count("\n\n"), 2)
             self.assertIn("nome completo do titular",envio["mensagem_bot"])
             self.assertEqual(envio["id_etapa_resultante"], 1)
             self.assertNotIn("evento_transicao", envio)
@@ -5559,18 +5563,26 @@ class Etapa1Tests(unittest.TestCase):
         self.assertEqual(envio["id_etapa_resultante"], 2)
         self.assertEqual(envio["evento_transicao"], "nome_valido_falta_cpf")
 
-    def test_todos_tipos_nao_textuais_encaminham_apos_saudacao(self):
-        for tipo in ("audio", "image", "video", "document", "sticker", "location", "contacts", "interactive", "unknown"):
-            with self.subTest(tipo=tipo):
-                envio = flow_sender(contexto(tipo=tipo, texto=None))
-                self.assertEqual(envio["evento_transicao"], "midia_recebida")
-                self.assertEqual(envio["mensagem_bot"], MENSAGEM_PRODUTO_NAO_INFORMADO)
+    def test_midia_repete_cada_pergunta_preservando_os_controles(self):
+        for etapa in range(1, 7):
+            for tipo in ("audio", "image", "video", "document", "sticker", "location", "contacts", "unknown"):
+                with self.subTest(etapa=etapa, tipo=tipo):
+                    envio = flow_sender(contexto(etapa=etapa, tipo=tipo, texto="Quero um humano"))
+                    self.assertEqual(envio["id_etapa_resultante"], etapa)
+                    self.assertEqual(envio["tipo_tratamento"], "midia_na_etapa")
+                    self.assertIn("mensagens de texto", envio["mensagem_bot"])
+                    self.assertNotIn("evento_transicao", envio)
+                    if etapa in (3, 4, 5):
+                        interativo = envio["interativo"]
+                        self.assertEqual(interativo["body"]["text"], envio["mensagem_bot"])
+                        self.assertEqual(interativo["type"], {3:"button", 4:"list", 5:"button"}[etapa])
+        self.wa.send_carousel.assert_not_called()
 
     def test_midia_apos_escolher_ambos_usa_mensagem_dos_dois_produtos(self):
-        c = contexto(etapa=4, tipo="audio", texto=None)
+        c = contexto(etapa=4, tipo="audio", texto=None, turnos=3)
         c["produto"] = "ambos"
         envio = flow_sender(c)
-        self.assertEqual(envio["evento_transicao"], "midia_recebida")
+        self.assertEqual(envio["evento_transicao"], "limite_sem_avanco")
         self.assertEqual(envio["mensagem_bot"], MENSAGEM_AMBOS_PRODUTOS)
 
     def test_humano_em_qualquer_frase_sem_diferenciar_caixa(self):
@@ -5603,8 +5615,8 @@ class Etapa1Tests(unittest.TestCase):
         for base in ("", "http://example.test/img", "https://example.test/img?token=x"):
             with patch.dict(os.environ, {"WHATSAPP_MIDIAS_BASE_URL": base}):
                 with self.assertRaises(ValueError):
-                    flow_sender(contexto(tipo="audio"))
-        c = contexto(tipo="audio")
+                    flow_sender(contexto(tipo="audio", turnos=3))
+        c = contexto(tipo="audio", turnos=3)
         c["central"]["telefone_sofas"] = None
         with self.assertRaises(ValueError):
             flow_sender(c)
@@ -5613,7 +5625,7 @@ class Etapa1Tests(unittest.TestCase):
     def test_falha_meta_e_propagada_para_recuperacao_worker(self):
         self.wa.send_carousel.side_effect = RuntimeError("falha simulada")
         with self.assertRaises(ErroEnvioMeta):
-            flow_sender(contexto(tipo="audio"))
+            flow_sender(contexto(tipo="audio", turnos=3))
         self.wa.send_message.assert_not_called()
 
     def test_resposta_sem_wamid_nao_e_considerada_enviada(self):
@@ -5635,8 +5647,8 @@ class Etapa1Tests(unittest.TestCase):
         self.wa.send_carousel.assert_not_called()
 
     def test_mapa_invalido_impede_envio(self):
-        c = contexto(tipo="audio")
-        c["transicoes_permitidas"]["midia_recebida"] = 8
+        c = contexto(tipo="audio", turnos=3)
+        c["transicoes_permitidas"]["limite_sem_avanco"] = 8
         with self.assertRaises(ValueError):
             flow_sender(c)
         self.wa.send_carousel.assert_not_called()
@@ -6085,14 +6097,28 @@ class WorkerPostgresTests(unittest.TestCase):
             reconfirmar.assert_called_once()
             self.assertEqual(self.adm.execute("SELECT count(*) FROM chatbot.fila_mensagens").fetchone()[0],1)
 
+    def test_quatro_midias_com_contato_pendente_encaminham_no_quarto_turno(self):
+        for texto in ("Oi", "Ana da Silva"):
+            self.entrada_privada(texto)
+            self.ciclo()
+        for n in range(1, 4):
+            self.entrada_privada(tipo="audio")
+            self.ciclo()
+            self.assertEqual(self.adm.execute("SELECT erros_cliente FROM chatbot.solicitacao_contato").fetchone(), (n,))
+            self.assertIn("mensagens de texto", self.wa.request_contact_info.call_args.kwargs["text"])
+        self.entrada_privada(tipo="image")
+        self.ciclo()
+        self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_sem_avanco"))
+        self.wa.send_carousel.assert_called_once()
+
     def test_so_bsuid_nome_compartilhamento_cpf(self):
         for texto in ("Oi","Ana Maria da Silva"):
             self.assertEqual(self.entrada_privada(texto)["status"],"inserted")
             self.ciclo()
         self.wa.request_contact_info.assert_called_once()
         self.assertIn("Ana,",self.wa.request_contact_info.call_args.kwargs["text"])
-        for _ in range(3):
-            self.entrada_privada("ainda nao")
+        for tipo in ("audio", "image", "text"):
+            self.entrada_privada("ainda nao" if tipo == "text" else None, tipo=tipo)
             self.ciclo()
         self.assertEqual(self.adm.execute("SELECT erros_cliente FROM chatbot.solicitacao_contato").fetchone()[0],3)
         self.assertEqual(self.entrada_privada(cartao=True)["status"],"inserted")
@@ -6244,7 +6270,7 @@ class WorkerPostgresTests(unittest.TestCase):
     def test_falha_meta_nao_conta_turno_nem_fecha(self):
         self.preparar()
         self.wa.send_carousel.side_effect = RuntimeError("falha de transporte simulada")
-        item = self.fila(None, "audio")
+        item = self.fila("humano")
         self.ciclo()
         self.assertEqual(self.conversa()[:3], (1, 0, True))
         self.assertEqual(self.adm.execute("""
@@ -6254,12 +6280,12 @@ class WorkerPostgresTests(unittest.TestCase):
 
     def test_queda_apos_commit_da_resposta_recupera_fechamento_sem_reenviar(self):
         self.preparar()
-        item = self.fila(None, "image")
+        item = self.fila("humano")
         self.ciclo(finalizar_mensagem_processada=RuntimeError("queda antes da finalização"))
         self.assertEqual(self.conversa()[:3], (7, 0, True))
         self.adm.execute("UPDATE chatbot.fila_mensagens SET next_attempt_at=now() WHERE id_mensagem=%s", (item,))
         self.ciclo()
-        self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_midia"))
+        self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_humano"))
         self.wa.send_carousel.assert_called_once()
 
     def test_retry_de_repeticao_nao_incrementa_duas_vezes(self):
@@ -6362,17 +6388,17 @@ class WorkerPostgresTests(unittest.TestCase):
         self.assertEqual(self.cache.call_args.args[1]["bloqueio_dias"], 90)
         self.assertEqual(self.adm.execute("SELECT count(*) FROM chatbot.cliente_bloqueado_meta").fetchone()[0], 0)
 
-    def test_etapa2_pedido_humano_e_midia_usam_encerramento_universal(self):
-        for tipo, texto, motivo in (("text", "Quero atendimento humano", "encaminhamento_humano"),
-                                    ("document", None, "encaminhamento_midia")):
-            with self.subTest(tipo=tipo):
-                self.setUp()
-                self.preparar_cpf()
-                self.fila(texto, tipo)
-                self.ciclo()
-                self.assertEqual(self.conversa()[:4], (7, 0, False, motivo))
-                self.assertEqual(self.cache.call_args.args[1]["bloqueio_dias"], 90)
-                self.wa.send_carousel.assert_called_once()
+    def test_cpf_mistura_midia_e_texto_quarto_erro_encaminha(self):
+        self.preparar_cpf()
+        for n, (texto, tipo) in enumerate([(None,"document"),("123","text"),(None,"image")], 1):
+            self.fila(texto, tipo)
+            self.ciclo()
+            self.assertEqual(self.conversa()[:3], (2, n, True))
+        self.fila(None, "video")
+        self.ciclo()
+        self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_sem_avanco"))
+        self.assertEqual(self.cache.call_args.args[1]["bloqueio_dias"], 90)
+        self.wa.send_carousel.assert_called_once()
 
     def test_etapa2_retry_de_cpf_invalido_nao_conta_duas_vezes(self):
         self.preparar_cpf()
@@ -6548,7 +6574,7 @@ class WorkerPostgresTests(unittest.TestCase):
         self.adm.execute("UPDATE chatbot.fila_mensagens SET next_attempt_at=now() WHERE id_mensagem=%s", (item,))
         self.ciclo()
         self.assertIsNone(self.adm.execute("SELECT nome_titular FROM chatbot.cliente").fetchone()[0])
-        self.assertIn("Sou o Theo", self.wa.send_message.call_args.kwargs["text"])
+        self.assertIn("eu sou o Theo", self.wa.send_message.call_args.kwargs["text"])
 
     def test_migracao_remapeia_encerramento_preservando_prazo_e_historico(self):
         self.carregar_catalogo("tests/fixtures/catalogo_pos_venda_20261118.sql")
@@ -6765,10 +6791,15 @@ class WorkerPostgresTests(unittest.TestCase):
         for _ in range(2):
             self.adm.execute(recoleta)
             self.assertEqual(self.adm.execute("SELECT count(*) FROM chatbot.etapa_transicao").fetchone(), (27,))
+        midia = (ROOT / "deploy/migrations/20261127_midia_repete_etapa.sql").read_text(encoding="utf-8")
+        for _ in range(2):
+            self.adm.execute(midia)
+            self.assertEqual(self.adm.execute("SELECT count(*) FROM chatbot.etapa_transicao").fetchone(), (21,))
         self.assertIsNone(buscar_bloqueio_ativo_por_cliente_unidade("5511999990000", "999", self.adm.cursor()))
         self.fila("Sim")
         self.ciclo()
         self.assertEqual(self.wa.send_message.call_args.kwargs["text"], MENSAGEM_DETALHES)
+        self.assertTrue(MENSAGEM_DETALHES.startswith("Certo, estamos quase lá! 😁\n\nPara podermos"))
         self.assertIsNone(self.adm.execute("SELECT detalhes FROM chatbot.atendimento_pos_venda").fetchone()[0])
 
     def test_nota_perdida_avanca_para_relato_sem_criar_pedido(self):
@@ -6824,7 +6855,7 @@ class WorkerPostgresTests(unittest.TestCase):
             self.fila("?", "text")
             self.ciclo()
             self.assertEqual(self.conversa()[:3], (4, turno, True))
-        self.fila("Outros", "interactive")
+        self.fila(None, "document")
         self.ciclo()
         self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_sem_avanco"))
         self.assertEqual(self.adm.execute("""
@@ -6838,20 +6869,24 @@ class WorkerPostgresTests(unittest.TestCase):
             self.fila("???")
             self.ciclo()
             self.assertEqual(self.conversa()[:3], (3, n, True))
-        self.fila("Estofados e Móveis", "interactive")
+        self.fila("id de botão desconhecido", "interactive")
         self.ciclo()
         self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_sem_avanco"))
         self.assertIsNone(self.adm.execute("SELECT produto FROM chatbot.atendimento_pos_venda").fetchone()[0])
         self.assertEqual(self.cache.call_args.args[1]["bloqueio_dias"], 90)
 
-    def test_produto_midia_usa_universal_e_dois_contatos(self):
+    def test_produto_valido_apos_tres_midias_zera_contador(self):
         self.preparar_produto()
-        self.fila(None, "video")
+        for n in range(1, 4):
+            self.fila(None, "video")
+            self.ciclo()
+            self.assertEqual(self.conversa()[:3], (3, n, True))
+        self.fila("móveis")
         self.ciclo()
-        self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_midia"))
+        self.assertEqual(self.conversa()[:3], (4, 0, True))
         self.assertEqual(self.adm.execute("""
             SELECT produto,encaminhado_sofas,encaminhado_moveis FROM chatbot.atendimento_pos_venda
-        """).fetchone(), (None, "557592087803", "557582467000"))
+        """).fetchone(), ("moveis", None, None))
 
     def test_produto_queda_antes_commit_reverte_dado_etapa_e_resposta(self):
         self.preparar_produto()
@@ -6950,7 +6985,7 @@ def contexto_cpf(texto="12345678901", *, tipo="text", turnos=0, cidade=None):
     ctx = contexto(etapa=2, texto=texto, tipo=tipo, turnos=turnos)
     ctx["transicoes_permitidas"] = {
         "cpf_valido": 3,
-        "midia_recebida": 7, "humano_solicitado": 7, "limite_sem_avanco": 7,
+        "humano_solicitado": 7, "limite_sem_avanco": 7,
     }
     ctx["cadastro"] = {"nome_titular": "João da Silva", "cidade_loja_compra": cidade}
     return ctx
@@ -7050,13 +7085,10 @@ class Etapa2Tests(unittest.TestCase):
         self.assertEqual(envio["evento_transicao"], "limite_sem_avanco")
         self.wa.send_carousel.assert_called_once()
 
-    def test_midia_ou_pedido_humano_usam_o_universal_antes_do_cpf(self):
-        for tipo, texto, evento in (("audio", None, "midia_recebida"),
-                                    ("text", "Quero um HUMANO, CPF 01234567890", "humano_solicitado")):
-            envio = flow_sender(contexto_cpf(texto, tipo=tipo))
-            self.assertEqual(envio["id_etapa_resultante"], 7)
-            self.assertEqual(envio["evento_transicao"], evento)
-            self.assertNotIn("cpf_titular", envio)
+    def test_pedido_humano_antecipa_validacao_do_cpf(self):
+        envio = flow_sender(contexto_cpf("Quero um HUMANO, CPF 01234567890"))
+        self.assertEqual(envio["evento_transicao"], "humano_solicitado")
+        self.assertNotIn("cpf_titular", envio)
         self.wa.send_message.assert_not_called()
 
     def test_transicao_ausente_impede_envio(self):
@@ -10327,12 +10359,12 @@ class RemetenteCentralTests(unittest.TestCase):
         self.enterContext(patch("core.integrations.whatsapp.pywa_functions.cliente.WhatsAppCentral",
                                 side_effect=criar_cliente))
         self.enterContext(patch.dict(os.environ, ENV))
-        encaminhar_moveis = contexto(tipo="audio")
+        encaminhar_moveis = contexto(tipo="audio", turnos=3)
         encaminhar_moveis["produto"] = "moveis"
         for ctx, tipo in (
             (contexto(apresentacao=True), "text"), (contexto_produto("talvez"), "button"),
             (contexto_produto("móveis"), "list"), (encaminhar_moveis, "cta_url"),
-            (contexto(tipo="audio"), "carousel"),
+            (contexto(tipo="audio", turnos=3), "carousel"),
         ):
             for waac in (None, "771"):
                 with self.subTest(tipo=tipo, waac=waac):
@@ -10866,12 +10898,11 @@ EVENTO_PEDIDOS_ASSISTENCIA = "pedidos_assistencia"
 EVENTO_PEDIDOS_DEMAIS_ASSUNTOS = "pedidos_demais_assuntos"
 EVENTO_NOTA_PERDIDA_ASSISTENCIA = "nota_perdida_assistencia"
 EVENTO_NOTA_PERDIDA_DEMAIS_ASSUNTOS = "nota_perdida_demais_assuntos"
-EVENTO_MIDIA_RECEBIDA = "midia_recebida"
 EVENTO_HUMANO_SOLICITADO = "humano_solicitado"
 EVENTO_LIMITE_SEM_AVANCO = "limite_sem_avanco"
 
 EVENTOS_ENCAMINHAMENTO = frozenset({
-    EVENTO_MIDIA_RECEBIDA, EVENTO_HUMANO_SOLICITADO, EVENTO_LIMITE_SEM_AVANCO,
+    EVENTO_HUMANO_SOLICITADO, EVENTO_LIMITE_SEM_AVANCO,
 })
 ```
 
@@ -10898,22 +10929,16 @@ INSERT INTO chatbot.etapa_transicao (id_etapa_origem, evento, id_etapa_destino) 
     (5, 'pedidos_demais_assuntos', 6),
     (5, 'nota_perdida_demais_assuntos', 6),
     (6, 'situacao_informada', 7),
-    (1, 'midia_recebida', 7),
     (1, 'humano_solicitado', 7),
     (1, 'limite_sem_avanco', 7),
-    (2, 'midia_recebida', 7),
     (2, 'humano_solicitado', 7),
     (2, 'limite_sem_avanco', 7),
-    (3, 'midia_recebida', 7),
     (3, 'humano_solicitado', 7),
     (3, 'limite_sem_avanco', 7),
-    (4, 'midia_recebida', 7),
     (4, 'humano_solicitado', 7),
     (4, 'limite_sem_avanco', 7),
-    (5, 'midia_recebida', 7),
     (5, 'humano_solicitado', 7),
     (5, 'limite_sem_avanco', 7),
-    (6, 'midia_recebida', 7),
     (6, 'humano_solicitado', 7),
     (6, 'limite_sem_avanco', 7);
 
@@ -11373,7 +11398,7 @@ from core.etapas_pos_venda import ETAPA_ENCAMINHAMENTO, EVENTO_SITUACAO_INFORMAD
 from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa6_detalhes import enviar_etapa6_detalhes
 from core.integrations.whatsapp.pywa_functions.pywa_senders.encaminhamento_pos_venda import enviar_encaminhamento
 from workers.worker_flow.response_flow.etapas.validadores_contexto.valida_detalhes_etapa6 import validar_contexto_detalhes
-from workers.worker_flow.response_flow.tratamento_universal_pos_venda import resolver_tratamento_universal
+from workers.worker_flow.response_flow.tratamento_universal_pos_venda import repetir_etapa, resolver_tratamento_universal
 from workers.worker_flow.response_flow.transicoes.resolver_transicao import (
     resolver_destino_transicao, anexar_transicao_ao_contexto_envio,
 )
@@ -11390,7 +11415,7 @@ def resolve_etapa6_detalhes(contexto):
         return tratamento
     detalhes = validar_contexto_detalhes(contexto)
     if not detalhes:
-        return enviar_etapa6_detalhes(telefone, central, repetir=True)
+        return repetir_etapa(contexto, enviar_etapa6_detalhes, telefone, central, repetir=True)
     evento = EVENTO_SITUACAO_INFORMADA
     destino = resolver_destino_transicao(contexto, evento, destinos_esperados={ETAPA_ENCAMINHAMENTO})
     envio = enviar_encaminhamento({**contexto, "detalhes": detalhes}, evento)
@@ -12911,4 +12936,862 @@ exec pg_virtualenv bash -eu -o pipefail -c '
     DB_NAME=baratao_admin_teste PYTHONPATH="$PWD:$PWD/callback" DJANGO_SETTINGS_MODULE=callback.callback.settings \
         "$BARATAO_PYTHON" -m unittest -v tests.admin_central_postgres
 '
+```
+
+## 86. `core/integrations/whatsapp/messages/tratamentos/midia.py` (aplicar)
+
+```python
+"""Orientação de formato para entradas não suportadas no pós-venda."""
+from core.etapas_pos_venda import ETAPA_NOME, ETAPA_CPF, ETAPA_DETALHES
+
+AVISO_MIDIA = "Olha, só consigo entender mensagens de texto."
+
+PERGUNTAS_POR_TEXTO = {
+    ETAPA_NOME: "Me informe novamente o nome completo do titular da compra.",
+    ETAPA_CPF: "Em uma única mensagem, me informe o CPF do titular da compra.",
+    ETAPA_DETALHES: "Descreva em texto a sua situação e o que você precisa.",
+}
+
+
+def avisar_sobre_midia(pergunta):
+    return f"{AVISO_MIDIA}\n\n{pergunta}"
+```
+
+## 87. `core/integrations/whatsapp/pywa_functions/pywa_senders/etapa3.py` (aplicar)
+
+```python
+"""Apresentação e repetição da pergunta de produto; sem validar a entrada."""
+
+from pywa.types import Button
+
+from core.integrations.whatsapp.messages.tratamentos.midia import avisar_sobre_midia
+from core.etapas_pos_venda import ETAPA_PRODUTO
+from core.integrations.whatsapp.messages.etapa3_messages import (
+    montar_mensagem_etapa3, BOTOES_PRODUTO, MENSAGEM_PRODUTO_INVALIDO, RODAPE_PRODUTO,
+)
+from core.integrations.whatsapp.pywa_functions.pywa_senders.texto_pos_venda import enviar_texto_pos_venda
+
+
+def enviar_etapa3(cliente_telefone, phone_id_unidade, *, nome_titular=None, invalido=False, midia=False):
+    botoes = [
+        Button(title=titulo, callback_data=identificador)
+        for titulo, identificador in BOTOES_PRODUTO
+    ]
+    mensagem = MENSAGEM_PRODUTO_INVALIDO if invalido else montar_mensagem_etapa3(nome_titular)
+    envio = enviar_texto_pos_venda(
+        cliente_telefone, phone_id_unidade,
+        avisar_sobre_midia(mensagem) if midia else mensagem,
+        ETAPA_PRODUTO, botoes=botoes, rodape=RODAPE_PRODUTO,
+    )
+    if invalido:
+        envio.update(tratamento=True, tipo_tratamento="produto_invalido")
+    return envio
+```
+
+## 88. `core/integrations/whatsapp/pywa_functions/pywa_senders/etapa4.py` (aplicar)
+
+```python
+"""Envia a lista de assuntos; não interpreta nem persiste a escolha."""
+
+from pywa.types import Section, SectionList, SectionRow
+from core.integrations.whatsapp.messages.tratamentos.midia import avisar_sobre_midia
+from core.etapas_pos_venda import ETAPA_ASSUNTO
+from core.integrations.whatsapp.messages.etapa4_messages import (
+    MENSAGEM_ASSUNTO, MENSAGEM_ASSUNTO_INVALIDO, OPCOES_ASSUNTO,
+)
+from .texto_pos_venda import enviar_texto_pos_venda
+
+
+def enviar_etapa4(cliente_telefone, phone_id_unidade, *, invalido=False, midia=False):
+    lista = SectionList(button_title="Escolher assunto", sections=[Section(
+        title="Assunto do atendimento",
+        rows=[SectionRow(title=titulo, callback_data=f"assunto:{valor}", description=descricao)
+              for titulo, valor, descricao in OPCOES_ASSUNTO],
+    )])
+    mensagem = MENSAGEM_ASSUNTO_INVALIDO if invalido else MENSAGEM_ASSUNTO
+    envio = enviar_texto_pos_venda(
+        cliente_telefone, phone_id_unidade,
+        avisar_sobre_midia(mensagem) if midia else mensagem,
+        ETAPA_ASSUNTO, botoes=lista,
+    )
+    if invalido:
+        envio.update(tratamento=True, tipo_tratamento="assunto_invalido")
+    return envio
+```
+
+## 89. `core/integrations/whatsapp/pywa_functions/pywa_senders/etapa5_pedidos.py` (aplicar)
+
+```python
+"""Envia a pergunta de pedidos após a escolha do assunto."""
+from pywa.types import Button
+
+from core.integrations.whatsapp.messages.tratamentos.midia import avisar_sobre_midia
+from core.etapas_pos_venda import ETAPA_PEDIDOS
+from core.integrations.whatsapp.messages.etapa5_pedidos_messages import (
+    BOTAO_NOTA_PERDIDA, MENSAGEM_PEDIDOS, MENSAGEM_PEDIDO_INVALIDO, MENSAGEM_PEDIDOS_INVALIDOS,
+)
+from .texto_pos_venda import enviar_texto_pos_venda
+
+
+def enviar_etapa5_pedidos(cliente_telefone, phone_id_unidade, *, quantidade_para_correcao=None, midia=False):
+    mensagem = MENSAGEM_PEDIDOS
+    if quantidade_para_correcao is not None:
+        mensagem = MENSAGEM_PEDIDOS_INVALIDOS if quantidade_para_correcao >= 2 else MENSAGEM_PEDIDO_INVALIDO
+    envio = enviar_texto_pos_venda(
+        cliente_telefone, phone_id_unidade, avisar_sobre_midia(mensagem) if midia else mensagem,
+        ETAPA_PEDIDOS,
+        botoes=[Button(title=BOTAO_NOTA_PERDIDA, callback_data="pedidos:nota_perdida")],
+    )
+    if quantidade_para_correcao is not None:
+        envio.update(tratamento=True, tipo_tratamento="pedido_invalido")
+    return envio
+```
+
+## 90. `core/integrations/whatsapp/pywa_functions/pywa_senders/repeticao_midia.py` (aplicar)
+
+```python
+"""Repete a pergunta com o mesmo controle interativo oferecido pela etapa."""
+from core.etapas_pos_venda import ETAPA_PRODUTO, ETAPA_ASSUNTO, ETAPA_PEDIDOS
+from core.integrations.whatsapp.messages.tratamentos.midia import PERGUNTAS_POR_TEXTO, avisar_sobre_midia
+from .etapa3 import enviar_etapa3
+from .etapa4 import enviar_etapa4
+from .etapa5_pedidos import enviar_etapa5_pedidos
+from .texto_pos_venda import enviar_texto_pos_venda
+
+_INTERATIVOS = {
+    ETAPA_PRODUTO: enviar_etapa3,
+    ETAPA_ASSUNTO: enviar_etapa4,
+    ETAPA_PEDIDOS: enviar_etapa5_pedidos,
+}
+
+
+def enviar_repeticao_midia(destinatario, remetente, etapa):
+    if etapa in _INTERATIVOS:
+        envio = _INTERATIVOS[etapa](destinatario, remetente, midia=True)
+    else:
+        texto = avisar_sobre_midia(PERGUNTAS_POR_TEXTO[etapa])
+        envio = enviar_texto_pos_venda(destinatario, remetente, texto, etapa)
+    return dict(envio, tratamento=True, tipo_tratamento="midia_na_etapa")
+```
+
+## 91. `core/validacoes/encaminhamento_pos_venda.py` (aplicar)
+
+```python
+"""Classificação da entrada e destino do encaminhamento humano."""
+from core.etapas_pos_venda import ETAPA_PRODUTO, ETAPA_ASSUNTO, ETAPA_PEDIDOS
+from core.validacoes.produto_pos_venda import TIPOS_INTERATIVOS_PRODUTO
+from core.validacoes.assunto_pos_venda import TIPOS_INTERATIVOS_ASSUNTO
+from core.validacoes.pedidos_pos_venda import TIPOS_INTERATIVOS_PEDIDO
+
+LIMITE_TURNOS_SEM_AVANCO = 3
+
+_INTERATIVOS_POR_ETAPA = {
+    ETAPA_PRODUTO: TIPOS_INTERATIVOS_PRODUTO,
+    ETAPA_ASSUNTO: TIPOS_INTERATIVOS_ASSUNTO,
+    ETAPA_PEDIDOS: TIPOS_INTERATIVOS_PEDIDO,
+}
+
+
+def entrada_nao_suportada(etapa, tipo):
+    return tipo != "text" and tipo not in _INTERATIVOS_POR_ETAPA.get(etapa, ())
+
+
+def pediu_humano(tipo, texto):
+    return tipo == "text" and "humano" in (texto or "").casefold()
+
+
+def setores_encaminhamento(produto):
+    if produto == "moveis":
+        return ("moveis",)
+    if produto == "estofados":
+        return ("sofas",)
+    return ("sofas", "moveis")
+```
+
+## 92. `deploy/migrations/20261127_midia_repete_etapa.sql` (aplicar)
+
+```sql
+-- Beta V0.2.0. Reaplicável na base Baratão de sete etapas.
+BEGIN;
+SET LOCAL lock_timeout = '8s';
+LOCK TABLE chatbot.etapa_transicao IN SHARE ROW EXCLUSIVE MODE;
+
+DELETE FROM chatbot.etapa_transicao
+WHERE id_etapa_origem BETWEEN 1 AND 6 AND evento = 'midia_recebida' AND id_etapa_destino = 7;
+
+DO $conferir$
+BEGIN
+    IF (SELECT array_agg(nome_etapa::text ORDER BY id_etapa) FROM chatbot.etapa)
+        IS DISTINCT FROM ARRAY['nome_titular','cpf_titular','produto','assunto','pedidos','detalhes','encaminhamento']
+        OR (SELECT count(*) FROM chatbot.etapa_transicao) <> 21
+        OR EXISTS (SELECT FROM chatbot.etapa_transicao WHERE evento='midia_recebida')
+        OR (SELECT count(*) FROM chatbot.etapa_transicao WHERE id_etapa_origem BETWEEN 1 AND 6
+            AND evento IN ('humano_solicitado','limite_sem_avanco') AND id_etapa_destino=7) <> 12 THEN
+        RAISE EXCEPTION 'Catálogo incompatível com o fluxo de mídia da Beta V0.2.0';
+    END IF;
+END
+$conferir$;
+COMMIT;
+```
+
+## 93. `tests/test_arquitetura_pos_venda.py` (aplicar)
+
+```python
+"""Contrato das camadas e efeitos autorizados por etapa, sem serviços externos."""
+
+import ast
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock
+
+from workers.worker_flow.transacoes.efeitos_transicao import atualizar_banco_conforme_transicao_de_etapa
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def contexto_efeitos(etapa):
+    mapas = {
+        1: {"nome_valido_falta_cpf": 2},
+        2: {"cpf_valido": 3},
+    }
+    return {
+        "id_cliente": 7, "id_conversa": 8, "id_etapa_origem_transicao": etapa,
+        "transicoes_permitidas": dict(mapas.get(etapa, {}), humano_solicitado=7, limite_sem_avanco=7),
+    }
+
+
+class EfeitosPorEtapaTests(unittest.TestCase):
+    def setUp(self):
+        self.cursor = MagicMock()
+        self.cursor.rowcount = 1
+
+    def persistir(self, etapa, **envio):
+        return atualizar_banco_conforme_transicao_de_etapa(
+            contexto_efeitos(etapa), envio, self.cursor,
+        )
+
+    def test_nome_confirmado_grava_cliente_e_atendimento(self):
+        efeito = self.persistir(
+            1, evento_transicao="nome_valido_falta_cpf", id_etapa_resultante=2,
+            nome_titular="João da Silva",
+        )
+        self.assertEqual(efeito, {"nome_titular": "João da Silva"})
+        self.assertEqual([c.args[1] for c in self.cursor.execute.call_args_list],
+                         [("João da Silva", 7), ("João da Silva", 8)])
+
+    def test_cpf_confirmado_grava_global_e_snapshot_para_ambos_destinos(self):
+        for evento, destino in (("cpf_valido", 3),):
+            with self.subTest(evento=evento):
+                self.cursor.reset_mock()
+                efeito = self.persistir(
+                    2, evento_transicao=evento, id_etapa_resultante=destino,
+                    cpf_titular="01234567890",
+                )
+                self.assertEqual(efeito, {"cpf_titular": "01234567890"})
+                self.assertEqual([c.args[1] for c in self.cursor.execute.call_args_list],
+                                 [("01234567890", 7), ("01234567890", 8)])
+
+    def test_saudacao_e_repeticoes_nao_gravam_dados_ou_contam_turnos_aqui(self):
+        for etapa, envio in (
+            (1, {"id_etapa_resultante": 1}),
+            (1, {"tratamento": True, "id_etapa_resultante": 1}),
+            (2, {"tratamento": True, "id_etapa_resultante": 2}),
+        ):
+            with self.subTest(etapa=etapa):
+                self.assertEqual(self.persistir(etapa, **envio), {})
+        self.cursor.execute.assert_not_called()
+
+    def test_replay_nao_reaplica_dados_do_envio(self):
+        self.assertEqual(self.persistir(
+            2, resposta_ja_existia=True, cpf_titular="99999999999",
+            id_etapa_resultante=3,
+        ), {})
+        self.cursor.execute.assert_not_called()
+
+    def test_universal_das_duas_etapas_persiste_apenas_contatos(self):
+        for etapa in (1, 2):
+            for evento in ("humano_solicitado", "limite_sem_avanco"):
+                with self.subTest(etapa=etapa, evento=evento):
+                    self.cursor.reset_mock()
+                    self.assertEqual(self.persistir(
+                        etapa, evento_transicao=evento, id_etapa_resultante=7,
+                        encaminhado_moveis="557582467000", encaminhado_sofas="557592087803",
+                    ), {"encaminhado": True})
+                    self.cursor.execute.assert_called_once()
+                    self.assertEqual(self.cursor.execute.call_args.args[1],
+                                     ("557582467000", "557592087803", 8))
+
+    def test_presenca_de_chave_na_etapa_errada_nao_autoriza_escrita(self):
+        casos = (
+            (7, {"evento_transicao": "nome_ausente", "id_etapa_resultante": 1,
+                  "nome_titular": "João da Silva"}),
+            (1, {"evento_transicao": "nome_valido_falta_cpf", "id_etapa_resultante": 2,
+                 "cpf_titular": "01234567890"}),
+            (2, {"evento_transicao": "cpf_valido", "id_etapa_resultante": 3,
+                 "nome_titular": "João da Silva", "cpf_titular": "01234567890"}),
+            (1, {"id_etapa_resultante": 1, "nome_titular": "João da Silva"}),
+            (2, {"id_etapa_resultante": 2, "cpf_titular": "01234567890"}),
+            (3, {"id_etapa_resultante": 3, "cpf_titular": "01234567890"}),
+        )
+        for etapa, envio in casos:
+            with self.subTest(etapa=etapa, envio=envio):
+                with self.assertRaises(ValueError):
+                    self.persistir(etapa, **envio)
+        self.cursor.execute.assert_not_called()
+
+    def test_evento_destino_origem_e_mapa_incompativeis_impedem_escrita(self):
+        base = {"evento_transicao": "cpf_valido",
+                "id_etapa_resultante": 3, "cpf_titular": "01234567890"}
+        for alteracao in (
+            {"evento_transicao": "nome_valido_falta_cpf"},
+            {"id_etapa_resultante": 4},
+            {"id_etapa_origem_transicao": 1},
+            {"tratamento": True},
+        ):
+            with self.subTest(alteracao=alteracao), self.assertRaises(ValueError):
+                self.persistir(2, **dict(base, **alteracao))
+        contexto = contexto_efeitos(2)
+        contexto["transicoes_permitidas"] = {}
+        with self.assertRaises(ValueError):
+            atualizar_banco_conforme_transicao_de_etapa(contexto, base, self.cursor)
+        self.cursor.execute.assert_not_called()
+
+    def test_dado_obrigatorio_ausente_ou_cpf_nao_normalizado_impede_escrita(self):
+        for valor in (None, "", " ", "012.345.678-90", "0123456789A", "１２３４５６７８９０１"):
+            with self.subTest(valor=valor), self.assertRaises(ValueError):
+                self.persistir(2, evento_transicao="cpf_valido",
+                               id_etapa_resultante=3, cpf_titular=valor)
+        with self.assertRaises(ValueError):
+            self.persistir(1, evento_transicao="nome_valido_falta_cpf", id_etapa_resultante=2)
+        with self.assertRaises(ValueError):
+            self.persistir(1, evento_transicao="humano_solicitado", id_etapa_resultante=7,
+                           encaminhado_moveis="557582467000")
+        self.cursor.execute.assert_not_called()
+
+    def test_registro_ausente_falha_para_worker_reverter_a_transacao(self):
+        self.cursor.rowcount = 0
+        with self.assertRaises(ValueError):
+            self.persistir(2, evento_transicao="cpf_valido",
+                           id_etapa_resultante=3, cpf_titular="01234567890")
+
+
+class FronteirasArquiteturaTests(unittest.TestCase):
+    def test_sql_executavel_fica_nos_repositorios(self):
+        desvios = []
+        for pasta in ("workers", "callback", "core", "utilitarios"):
+            for path in (ROOT / pasta).rglob("*.py"):
+                relativo = path.relative_to(ROOT).as_posix()
+                if relativo.startswith(("core/repositories/", "core/database/deploy_database/")):
+                    continue
+                tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+                for node in ast.walk(tree):
+                    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                            and node.func.attr in {"execute", "executemany", "callproc"}
+                            and node.args):
+                        # Redis Pipeline.execute() não recebe SQL e não entra aqui.
+                        desvios.append(f"{relativo}:{node.lineno}")
+        self.assertEqual(desvios, [])
+
+    def test_camadas_internas_nao_assumem_commit_ou_rollback(self):
+        desvios = []
+        pastas = ("core/repositories", "core/validacoes",
+                  "core/integrations/whatsapp/messages",
+                  "core/integrations/whatsapp/pywa_functions/pywa_senders",
+                  "workers/worker_flow/response_flow/etapas",
+                  "workers/worker_flow/transacoes")
+        for pasta in pastas:
+            for path in (ROOT / pasta).rglob("*.py"):
+                tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+                for node in ast.walk(tree):
+                    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                            and node.func.attr in {"commit", "rollback"}):
+                        desvios.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+        self.assertEqual(desvios, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## 94. `tests/test_etapa3_pos_venda.py` (aplicar)
+
+```python
+"""Produto: texto, botões, tratamentos, contrato dos efeitos e transporte simulado."""
+import os
+import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from core.validacoes.produto_pos_venda import extrair_produto
+from core.integrations.whatsapp.exceptions import ErroEnvioMeta
+from workers.worker_flow.response_flow.flow_sender import flow_sender
+from workers.worker_flow.transacoes.efeitos_transicao import atualizar_banco_conforme_transicao_de_etapa
+from tests.test_etapa1_pos_venda import contexto, ENV, PATCH_TEXTO, PATCH_CARTOES
+
+
+def contexto_produto(texto="Móveis", **kwargs):
+    ctx = contexto(etapa=3, texto=texto, **kwargs)
+    ctx["transicoes_permitidas"] = {
+        "produto_escolhido": 4,
+        "humano_solicitado": 7, "limite_sem_avanco": 7,
+    }
+    return ctx
+
+
+class ProdutoExtratorTests(unittest.TestCase):
+    def test_palavras_em_frases_sem_acento_e_com_limites(self):
+        casos = {
+            "Quero falar sobre meus MÓVEIS.": "moveis",
+            "apenas moveis": "moveis", "Meu móvel": "moveis",
+            "Sobre os estofados da compra": "estofados", "Meu sofá": "estofados",
+            "Estofados e Móveis": "ambos", "móveis e estofados": "ambos",
+            "quero falar dos dois": "ambos", "ambos": "ambos",
+            "das duas opções": "ambos", "dos dois setores": "ambos",
+            "nao recebi meus moveis": "moveis",
+            "não entregaram o estofado": "estofados",
+            "meus móveis não chegaram": "moveis",
+            "não só móveis, mas também estofados": "ambos",
+            "Os móveis e os estofados não chegaram": "ambos",
+        }
+        for texto, produto in casos.items():
+            with self.subTest(texto=texto):
+                self.assertEqual(extrair_produto(texto), produto)
+
+    def test_negacao_de_setor_e_de_ambos(self):
+        casos = {
+            "não quero falar de móveis": "estofados",
+            "não quero falar de estofados": "moveis",
+            "não é sobre móveis": "estofados",
+            "Não móveis, estofados": "estofados",
+            "Estofados sim, móveis não": "estofados",
+            "móveis não, estofados sim": "estofados",
+            "não quero móveis, quero estofados": "estofados",
+            "quero móveis e não estofados": "moveis",
+            "não quero falar dos dois": None,
+            "não quero ambos": None,
+            "não quero móveis nem estofados": None,
+            "não quero falar de móveis e estofados": None,
+            "nem móveis nem estofados": None,
+            "nenhum dos dois": None,
+            "não quero móveis, mas quero móveis": None,
+        }
+        for texto, produto in casos.items():
+            with self.subTest(texto=texto):
+                self.assertEqual(extrair_produto(texto), produto)
+
+    def test_ausencia_ou_ambiguidade_requer_correcao(self):
+        for texto in (None, "", " ", "sim", "123", "entrega", "automoveis", "imóveis",
+                      "sofamento", "não sei se são móveis", "talvez estofados"):
+            with self.subTest(texto=texto):
+                self.assertIsNone(extrair_produto(texto))
+
+
+class Etapa3Tests(unittest.TestCase):
+    def setUp(self):
+        self.wa = MagicMock()
+        self.wa.send_message.return_value = SimpleNamespace(id="wamid.texto")
+        self.wa.send_carousel.return_value = SimpleNamespace(id="wamid.cartoes")
+        for p in (patch.dict(os.environ, ENV), patch(PATCH_TEXTO, return_value=self.wa),
+                  patch(PATCH_CARTOES, return_value=self.wa)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_apresentacao_e_correcao_com_tres_botoes_e_rodape(self):
+        for apresentacao in (True, False):
+            envio = flow_sender(contexto_produto("???", apresentacao=apresentacao))
+            self.assertEqual(envio["id_etapa_resultante"], 3)
+            texto = ("Sobre qual tipo de produto você quer falar?" if apresentacao
+                     else "Não entendi, sobre qual tipo de produto você quer falar?")
+            self.assertEqual(envio["mensagem_bot"], texto)
+            self.assertEqual(bool(envio.get("tratamento")), not apresentacao)
+            botoes = envio["interativo"]["action"]["buttons"]
+            self.assertEqual([b["reply"]["title"] for b in botoes],
+                             ["Apenas Estofados", "Apenas Móveis", "Estofados e Móveis"])
+            self.assertEqual(envio["interativo"]["footer"]["text"], "Selecione apenas uma opção abaixo.")
+            self.assertEqual(self.wa.send_message.call_args.kwargs["footer"],
+                             "Selecione apenas uma opção abaixo.")
+
+    def test_tres_opcoes_interativas_avancam_com_lista_de_assuntos(self):
+        for tipo in ("interactive", "interactive_button", "button"):
+            for texto, esperado in (("Apenas Estofados", "estofados"),
+                                    ("Apenas Móveis", "moveis"),
+                                    ("Estofados e Móveis", "ambos"),
+                                    ("produto:ambos", "ambos")):
+                with self.subTest(tipo=tipo, texto=texto):
+                    envio = flow_sender(contexto_produto(texto, tipo=tipo))
+                    self.assertEqual(envio["id_etapa_resultante"], 4)
+                    self.assertEqual(envio["produto"], esperado)
+                    self.assertEqual(envio["evento_transicao"], "produto_escolhido")
+                    self.assertEqual(envio["interativo"]["type"], "list")
+                    self.assertEqual(len(envio["interativo"]["action"]["sections"][0]["rows"]), 5)
+        self.wa.send_carousel.assert_not_called()
+
+    def test_botao_desconhecido_repete_sem_tratar_como_midia(self):
+        for texto in ("assunto:entrega", "quero falar de móveis", "sim", None):
+            envio = flow_sender(contexto_produto(texto, tipo="interactive"))
+            self.assertTrue(envio["tratamento"])
+            self.assertEqual(envio["id_etapa_resultante"], 3)
+        self.wa.send_carousel.assert_not_called()
+
+    def test_frase_valida_e_negacao_avancam(self):
+        for texto, esperado in (("não quero falar de móveis", "estofados"),
+                                ("gostaria de falar dos dois", "ambos")):
+            envio = flow_sender(contexto_produto(texto))
+            self.assertEqual(envio["produto"], esperado)
+            self.assertEqual(envio["id_etapa_resultante"], 4)
+
+    def test_universal_tem_prioridade_sobre_escolha_e_quarto_turno(self):
+        for texto, tipo, turnos, evento in (
+            (None, "audio", 3, "limite_sem_avanco"),
+            (None, "image", 3, "limite_sem_avanco"),
+            ("humano para móveis", "text", 0, "humano_solicitado"),
+            ("id_desconhecido", "interactive", 3, "limite_sem_avanco"),
+            ("talvez", "text", 3, "limite_sem_avanco"),
+        ):
+            envio = flow_sender(contexto_produto(texto, tipo=tipo, turnos=turnos))
+            self.assertEqual(envio["id_etapa_resultante"], 7)
+            self.assertEqual(envio["evento_transicao"], evento)
+            self.assertNotIn("produto", envio)
+            self.assertIn("encaminhado_sofas", envio)
+            self.assertIn("encaminhado_moveis", envio)
+
+    def test_mapa_invalido_impede_envio(self):
+        ctx = contexto_produto()
+        ctx["transicoes_permitidas"]["produto_escolhido"] = 5
+        with self.assertRaises(ValueError):
+            flow_sender(ctx)
+        self.wa.send_message.assert_not_called()
+
+    def test_falha_meta_ou_falta_de_wamid_nao_devolve_produto(self):
+        self.wa.send_message.side_effect = RuntimeError("Falha simulada")
+        with self.assertRaises(ErroEnvioMeta):
+            flow_sender(contexto_produto())
+        self.wa.send_message.side_effect = None
+        self.wa.send_message.return_value = {}
+        with self.assertRaises(ErroEnvioMeta):
+            flow_sender(contexto_produto())
+
+    def test_replay_na_etapa4_nao_envia_nem_reinterpreta(self):
+        ctx = contexto_produto("Estofados")
+        ctx["id_etapa_atual"] = 4
+        ctx["resposta_bot_para_mensagem_atual"] = {
+            "id_etapa": 4, "id_hash_msg": "wamid.confirmado",
+            "interativo": {"_fluxo": {"evento": "produto_escolhido"}},
+        }
+        envio = flow_sender(ctx)
+        self.assertTrue(envio["resposta_ja_existia"])
+        self.assertNotIn("produto", envio)
+        self.wa.send_message.assert_not_called()
+
+    def test_efeito_produto_grava_somente_no_atendimento(self):
+        cursor = MagicMock(rowcount=1)
+        ctx = contexto_produto()
+        envio = flow_sender(ctx)
+        efeito = atualizar_banco_conforme_transicao_de_etapa(ctx, envio, cursor)
+        self.assertEqual(efeito, {"produto": "moveis"})
+        cursor.execute.assert_called_once()
+        self.assertIn("UPDATE chatbot.atendimento_pos_venda", cursor.execute.call_args.args[0])
+        self.assertEqual(cursor.execute.call_args.args[1], ("moveis", 12))
+
+    def test_dado_na_etapa_errada_e_produto_invalido_impedem_gravacao(self):
+        cursor = MagicMock(rowcount=1)
+        envio = {"id_etapa_resultante": 4, "evento_transicao": "produto_escolhido", "produto": "moveis"}
+        for ctx, alteracao in ((contexto(etapa=1), {}), (contexto_produto(), {"produto": "outro"}),
+                               (contexto_produto(), {"tratamento": True}),
+                               (contexto_produto(), {"cpf_titular": "01234567890"})):
+            with self.assertRaises(ValueError):
+                atualizar_banco_conforme_transicao_de_etapa(ctx, dict(envio, **alteracao), cursor)
+        cursor.execute.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## 95. `tests/test_etapa4_pos_venda.py` (aplicar)
+
+```python
+"""Contrato da lista, texto livre, efeitos por conversa e encaminhamento humano."""
+import os
+import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from callback.webhook.services.populating_fila_mensagens import extrair_conteudo_texto_mensagem
+from core.integrations.whatsapp.exceptions import ErroEnvioMeta
+from core.validacoes.assunto_pos_venda import extrair_assunto
+from workers.worker_flow.response_flow.flow_sender import flow_sender
+from workers.worker_flow.transacoes.efeitos_transicao import atualizar_banco_conforme_transicao_de_etapa
+from tests.test_etapa1_pos_venda import ENV, PATCH_CARTOES, PATCH_TEXTO, contexto
+
+
+def contexto_assunto(texto, *, produto="moveis", **kwargs):
+    ctx = contexto(etapa=4, texto=texto, **kwargs)
+    ctx["produto"] = produto
+    ctx["transicoes_permitidas"]["assunto_escolhido"] = 5
+    return ctx
+
+
+class AssuntoTests(unittest.TestCase):
+    def setUp(self):
+        self.wa = MagicMock()
+        self.wa.send_message.return_value = self.wa.send_carousel.return_value = SimpleNamespace(id="wamid.qa")
+        for p in (patch.dict(os.environ, ENV), patch(PATCH_TEXTO, return_value=self.wa),
+                  patch(PATCH_CARTOES, return_value=self.wa)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_frases_reconhecem_categorias_distintas(self):
+        for texto, esperado in (
+            ("Qual é a previsão de entrega?", "entrega"),
+            ("Meu sofá veio com avarias. Preciso de ASSISTENCIA.", "assistencia"),
+            ("Preciso de um montador para a montagem", "montador"),
+            ("Queria falar de outra coisa", "outros"), ("É outro assunto.", "outros"),
+            ("Outros", "outros"), ("Quero a previsão e um montador", "misto"),
+            ("Montagem, assistência e entrega", "misto"), ("Avarias e outro assunto", "misto"),
+            ("Duas ou mais opções acima", "misto"), ("desmontagem", None),
+            ("Entregador", None), ("Oi", None), ("123", None), (None, None),
+        ):
+            with self.subTest(texto=texto):
+                self.assertEqual(extrair_assunto(texto), esperado)
+
+    def test_todas_as_linhas_da_lista_passam_pelo_webhook_e_gravam_no_atendimento(self):
+        lista = flow_sender(contexto_assunto("", apresentacao=True))
+        linhas = lista["interativo"]["action"]["sections"][0]["rows"]
+        self.assertEqual([r["id"] for r in linhas], [
+            "assunto:entrega", "assunto:assistencia", "assunto:montador", "assunto:misto", "assunto:outros",
+        ])
+        for linha in linhas:
+            self.assertLessEqual(len(linha["title"]), 24)
+            for opcao in (linha, {"id": linha["id"]}):
+                payload = {"interactive": {"type": "list_reply", "list_reply": opcao}}
+                texto = extrair_conteudo_texto_mensagem(payload, "interactive")
+                ctx = contexto_assunto(texto, tipo="interactive")
+                envio = flow_sender(ctx)
+                assunto = linha["id"].split(":")[1]
+                self.assertEqual((envio["id_etapa_resultante"], envio["evento_transicao"], envio["assunto"]),
+                                 (5, "assunto_escolhido", assunto))
+                self.assertEqual(envio["interativo"]["action"]["buttons"][0]["reply"]["title"], "Perdi a nota")
+                cursor = MagicMock(rowcount=1)
+                self.assertEqual(atualizar_banco_conforme_transicao_de_etapa(ctx, envio, cursor), {"assunto": assunto})
+                self.assertEqual(cursor.execute.call_args.args[1], (assunto, ctx["id_conversa"]))
+
+    def test_entrada_invalida_repete_a_mesma_lista_sem_gravar(self):
+        lista = flow_sender(contexto_assunto("", apresentacao=True))["interativo"]["action"]
+        for texto, tipo in (("Oi", "text"), ("produto:ambos", "interactive"),
+                            ("Mais de um ou outros", "interactive"), ("quero entrega", "interactive")):
+            ctx = contexto_assunto(texto, tipo=tipo)
+            envio = flow_sender(ctx)
+            self.assertEqual(envio["interativo"]["action"], lista)
+            self.assertEqual(envio["tipo_tratamento"], "assunto_invalido")
+            self.assertTrue(envio["tratamento"])
+            self.assertEqual(envio["id_etapa_resultante"], 4)
+            cursor = MagicMock()
+            self.assertEqual(atualizar_banco_conforme_transicao_de_etapa(ctx, envio, cursor), {})
+            cursor.execute.assert_not_called()
+
+    def test_universal_antecipa_assunto_e_respeita_produto_ja_escolhido(self):
+        for produto, entrada, tipo, turnos, evento, setores in (
+            ("moveis", "Quero um humano para a entrega", "text", 0, "humano_solicitado", {"moveis"}),
+            ("estofados", None, "image", 3, "limite_sem_avanco", {"sofas"}),
+            ("ambos", "x", "interactive", 3, "limite_sem_avanco", {"moveis", "sofas"}),
+        ):
+            ctx = contexto_assunto(entrada, tipo=tipo, turnos=turnos, produto=produto)
+            envio = flow_sender(ctx)
+            self.assertEqual((envio["id_etapa_resultante"], envio["evento_transicao"]), (7, evento))
+            self.assertNotIn("assunto", envio)
+            self.assertEqual({k for k in envio if k.startswith("encaminhado_")},
+                             {f"encaminhado_{s}" for s in setores})
+            if len(setores) == 1:
+                self.assertEqual(envio["interativo"]["type"], "cta_url")
+                self.assertNotIn("header", self.wa.send_message.call_args.kwargs)
+                self.assertNotIn("header", envio["interativo"])
+                telefone = ctx["central"]["telefone_" + next(iter(setores))]
+                self.assertIn(f"wa.me/{telefone}?", envio["interativo"]["action"]["parameters"]["url"])
+
+    def test_mapa_e_confirmacao_da_meta_antes_de_qualquer_efeito(self):
+        ctx = contexto_assunto("Montagem")
+        ctx["transicoes_permitidas"]["assunto_escolhido"] = 6
+        with self.assertRaises(ValueError):
+            flow_sender(ctx)
+        self.wa.send_message.assert_not_called()
+        ctx["transicoes_permitidas"]["assunto_escolhido"] = 5
+        self.wa.send_message.return_value = {}
+        with self.assertRaises(ErroEnvioMeta):
+            flow_sender(ctx)
+```
+
+## 96. `tests/test_etapa5_pedidos.py` (aplicar)
+
+```python
+"""Contrato da etapa de pedidos da Baratão, com transporte simulado."""
+import os
+import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from core.validacoes.pedidos_pos_venda import extrair_pedidos
+from tests.test_etapa1_pos_venda import contexto, ENV, PATCH_TEXTO, PATCH_CARTOES
+from workers.worker_flow.response_flow.flow_sender import flow_sender
+from workers.worker_flow.transacoes.efeitos_transicao import atualizar_banco_conforme_transicao_de_etapa
+
+
+def contexto_pedidos(texto, assunto="entrega", **opcoes):
+    ctx = contexto(etapa=5, texto=texto, **opcoes)
+    ctx.update(produto="moveis", assunto=assunto, codigos_filiais={"01", "05", "09", "15", "29"})
+    ctx["transicoes_permitidas"].update(
+        pedidos_assistencia=6, nota_perdida_assistencia=6,
+        pedidos_demais_assuntos=6, nota_perdida_demais_assuntos=6,
+    )
+    return ctx
+
+
+class EtapaPedidosTests(unittest.TestCase):
+    def setUp(self):
+        self.wa = MagicMock()
+        self.wa.send_message.return_value = SimpleNamespace(id="wamid.qa")
+        for p in (patch.dict(os.environ, ENV), patch(PATCH_TEXTO, return_value=self.wa),
+                  patch(PATCH_CARTOES, return_value=self.wa)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_identificador_inteiro_e_zeros(self):
+        for invalido in ("123", "12.9", "12.099", "12,09", "12.0A", "A12.09", "12.09B",
+                         "1.2.09", "12#3.09", "12.09-1", "1:234.09", "12(34.09)",
+                         "-12.09", "+12.09", "١٢.٠٩", "12/34.09", "12. 09", "12 .09"):
+            with self.subTest(invalido=invalido):
+                self.assertEqual(extrair_pedidos(invalido), [])
+        self.assertEqual(extrair_pedidos("Pedido:0001.09,35.15 e (7.01). Repetindo 0001.09!"),
+                         ["0001.09", "35.15", "7.01"])
+
+    def test_sufixo_desconhecido_repete_com_botao_sem_gravacao_parcial(self):
+        singular = "Olha, não consegui identificar uma nota válida. Me fala novamente a nota, por favor."
+        plural = "Olha, uma ou mais notas estão inválidas. Digite todas novamente, por favor."
+        for mensagem_esperada, exemplos in (
+            (singular, ("12.00", "12.04", "12.99", "345.1", "123,01", "AB12.09",
+                        "476.213543.23", "245.42.3453.23", "23#4.01", "234.0A", "234.01X",
+                        "234.01/345.09", "234.01-345.09", "ABC", "@@@", "não entendi")),
+            (plural, ("1.04,2.09", "234.01 e 345.1", "345.1 234.01", "234.01,345.1,456.999",
+                      "345.1 e 456.4", "234.01 e A345.09", "1.01 e 2.04 e 3.15", "123 456",
+                      "nota:123 e a outra nota:234.01", "a nota é 123 e a outra é 234.01",
+                      "234.01 e 345 por favor", "234.01 e 23#4.09", "234.01 e 476.213543.23",
+                      "234.01 e 245.42.3453.23", "234.01 e AB345.09:", "234.01 e nota ABC",
+                      "234.01 e a outra nota é @@@", "234.01 e a outra nota é abc", "ABC e 234.01",
+                      "234.01 e ABC", "234.01,ABC", "ABC, 234.01", "234.01 e AB345 aqui")),
+        ):
+            for texto in exemplos:
+                with self.subTest(texto=texto):
+                    ctx = contexto_pedidos(texto)
+                    envio = flow_sender(ctx)
+                    self.assertTrue(envio["tratamento"])
+                    self.assertEqual(envio["mensagem_bot"], mensagem_esperada)
+                    self.assertEqual(envio["interativo"]["action"]["buttons"][0]["reply"]["title"], "Perdi a nota")
+                    self.assertNotIn("numeros_pedido", envio)
+                    cursor = MagicMock()
+                    self.assertEqual(atualizar_banco_conforme_transicao_de_etapa(ctx, envio, cursor), {})
+                    cursor.execute.assert_not_called()
+                    cursor.executemany.assert_not_called()
+
+    def test_quantidades_na_frase_nao_sao_notas_e_lista_valida_avanca(self):
+        for texto, esperado in (
+            ("Comprei 2 cadeiras no pedido 234.01", ["234.01"]),
+            ("O pedido 234.01 tem 2 cadeiras e 1 mesa.", ["234.01"]),
+            ("Comprei 2 ou 3 cadeiras no pedido 234.01.", ["234.01"]),
+            ("São 2: 234.01 e 345.09.", ["234.01", "345.09"]),
+            ("A NOTA FISCAL do pedido é 234.01.", ["234.01"]),
+            ("MINHAS NOTAS SÃO 234.01 E 345.09.", ["234.01", "345.09"]),
+            ("Nota 234.01, OBRIGADO!", ["234.01"]),
+            ("234.01 é a nota correta", ["234.01"]),
+            ("Comprei 2 produtos, seguem as notas 234.01 e 345.09", ["234.01", "345.09"]),
+            ("Pedidos: (234.01,345.09), repetindo 234.01.", ["234.01", "345.09"]),
+            ("Pedidos: (234.01),(345.09).", ["234.01", "345.09"]),
+        ):
+            with self.subTest(texto=texto):
+                envio = flow_sender(contexto_pedidos(texto))
+                self.assertEqual(envio["numeros_pedido"], esperado)
+                self.assertEqual(envio["id_etapa_resultante"], 6)
+
+    def test_pedidos_e_nota_perdida_seguem_o_assunto_da_conversa(self):
+        for assunto in ("entrega", "assistencia", "montador", "outros", "misto"):
+            for texto, tipo, esperado in (
+                ("Meus pedidos são 001.09 e 001.15.", "text", ["001.09", "001.15"]),
+                ("Perdi a nota", "text", []), ("Perdi a nota", "interactive", []),
+                ("pedidos:nota_perdida", "interactive", []),
+            ):
+                with self.subTest(assunto=assunto, texto=texto):
+                    ctx = contexto_pedidos(texto, tipo=tipo, assunto=assunto)
+                    envio = flow_sender(ctx)
+                    self.assertEqual(envio["numeros_pedido"], esperado)
+                    self.assertEqual(envio["id_etapa_resultante"], 6)
+        for texto, tipo in (("Acho que perdi a nota", "text"), ("pedidos:nota_perdida", "text"),
+                            ("001.09", "interactive"), ("assunto:entrega", "interactive")):
+            self.assertTrue(flow_sender(contexto_pedidos(texto, tipo=tipo))["tratamento"])
+
+    def test_painel_exibe_opcoes_do_atendimento_registrado(self):
+        from callback.monitoramento.apresentacao import botoes_para_mensagem
+        mensagem = {"quem_enviou": "bot", "tipo": "interactive", "id_etapa": 5}
+        self.assertEqual(botoes_para_mensagem(mensagem), ["Perdi a nota"])
+        self.assertEqual(botoes_para_mensagem({**mensagem, "id_etapa": 6}), [])
+        self.assertEqual(botoes_para_mensagem({**mensagem, "id_etapa": 7}), [])
+        contato = {"action": {"name": "request_contact_info"}}
+        self.assertEqual(botoes_para_mensagem({**mensagem, "interativo": contato}), [])
+        cta = {"action": {"parameters": {"display_text": "Pós-venda Móveis"}}}
+        self.assertEqual(botoes_para_mensagem({**mensagem, "id_etapa": 7, "interativo": cta}), ["Pós-venda Móveis"])
+
+    def test_universal_tem_prioridade_na_etapa5(self):
+        for entrada, tipo, turnos, evento in (
+            ("1.99", "text", 3, "limite_sem_avanco"), ("humano, pedido 12.09", "text", 0, "humano_solicitado"),
+            (None, "document", 3, "limite_sem_avanco"),
+        ):
+            envio = flow_sender(contexto_pedidos(entrada, tipo=tipo, turnos=turnos))
+            self.assertEqual((envio["evento_transicao"], envio["id_etapa_resultante"]), (evento, 7))
+            self.assertNotIn("numeros_pedido", envio)
+
+    def test_mapa_divergente_impede_envio(self):
+        ctx = contexto_pedidos("1.09")
+        ctx["transicoes_permitidas"]["pedidos_demais_assuntos"] = 7
+        with self.assertRaises(ValueError):
+            flow_sender(ctx)
+        self.wa.send_message.assert_not_called()
+```
+
+## 97. `workers/worker_flow/response_flow/tratamento_universal_pos_venda.py` (aplicar)
+
+```python
+"""Encaminha por solicitação ou no quarto turno que de fato repetiria a etapa."""
+from core.etapas_pos_venda import (
+    ETAPA_ENCAMINHAMENTO, EVENTO_HUMANO_SOLICITADO, EVENTO_LIMITE_SEM_AVANCO,
+)
+from core.validacoes.encaminhamento_pos_venda import (
+    LIMITE_TURNOS_SEM_AVANCO, entrada_nao_suportada, pediu_humano,
+)
+from core.integrations.whatsapp.pywa_functions.pywa_senders.encaminhamento_pos_venda import enviar_encaminhamento
+from core.integrations.whatsapp.pywa_functions.pywa_senders.repeticao_midia import enviar_repeticao_midia
+from workers.worker_flow.response_flow.transicoes.resolver_transicao import (
+    resolver_destino_transicao, anexar_transicao_ao_contexto_envio,
+)
+
+
+def _encaminhar(contexto, evento):
+    destino = resolver_destino_transicao(contexto, evento, destinos_esperados={ETAPA_ENCAMINHAMENTO})
+    envio = enviar_encaminhamento(contexto, evento)
+    return anexar_transicao_ao_contexto_envio(contexto, envio, evento, destino)
+
+
+def repetir_etapa(contexto, sender, *args, **kwargs):
+    if int(contexto.get("turnos_sem_avanco") or 0) >= LIMITE_TURNOS_SEM_AVANCO:
+        return _encaminhar(contexto, EVENTO_LIMITE_SEM_AVANCO)
+    return sender(*args, **kwargs)
+
+
+def resolver_tratamento_universal(contexto):
+    entrada = contexto["mensagem_cliente_atual"]
+    tipo = entrada.get("tipo_mensagem")
+    if pediu_humano(tipo, entrada.get("conteudo_texto")):
+        return _encaminhar(contexto, EVENTO_HUMANO_SOLICITADO)
+    etapa = contexto["id_etapa_atual"]
+    if entrada_nao_suportada(etapa, tipo):
+        return repetir_etapa(contexto, enviar_repeticao_midia, contexto["destinatario_envio"],
+                             entrada["id_phone_unidade"], etapa)
+    return None
 ```

@@ -14,7 +14,7 @@ from tests.test_etapa1_pos_venda import contexto, ENV, PATCH_TEXTO, PATCH_CARTOE
 def contexto_produto(texto="Móveis", **kwargs):
     ctx = contexto(etapa=3, texto=texto, **kwargs)
     ctx["transicoes_permitidas"] = {
-        "produto_escolhido": 4, "midia_recebida": 7,
+        "produto_escolhido": 4,
         "humano_solicitado": 7, "limite_sem_avanco": 7,
     }
     return ctx
@@ -124,11 +124,11 @@ class Etapa3Tests(unittest.TestCase):
 
     def test_universal_tem_prioridade_sobre_escolha_e_quarto_turno(self):
         for texto, tipo, turnos, evento in (
-            (None, "audio", 0, "midia_recebida"),
-            (None, "image", 0, "midia_recebida"),
+            (None, "audio", 3, "limite_sem_avanco"),
+            (None, "image", 3, "limite_sem_avanco"),
             ("humano para móveis", "text", 0, "humano_solicitado"),
-            ("Apenas Móveis", "interactive", 3, "limite_sem_avanco"),
-            ("Estofados", "text", 3, "limite_sem_avanco"),
+            ("id_desconhecido", "interactive", 3, "limite_sem_avanco"),
+            ("talvez", "text", 3, "limite_sem_avanco"),
         ):
             envio = flow_sender(contexto_produto(texto, tipo=tipo, turnos=turnos))
             self.assertEqual(envio["id_etapa_resultante"], 7)

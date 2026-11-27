@@ -17,8 +17,7 @@ def contexto_efeitos(etapa):
     }
     return {
         "id_cliente": 7, "id_conversa": 8, "id_etapa_origem_transicao": etapa,
-        "transicoes_permitidas": dict(mapas.get(etapa, {}), midia_recebida=7,
-                                     humano_solicitado=7, limite_sem_avanco=7),
+        "transicoes_permitidas": dict(mapas.get(etapa, {}), humano_solicitado=7, limite_sem_avanco=7),
     }
 
 
@@ -72,7 +71,7 @@ class EfeitosPorEtapaTests(unittest.TestCase):
 
     def test_universal_das_duas_etapas_persiste_apenas_contatos(self):
         for etapa in (1, 2):
-            for evento in ("midia_recebida", "humano_solicitado", "limite_sem_avanco"):
+            for evento in ("humano_solicitado", "limite_sem_avanco"):
                 with self.subTest(etapa=etapa, evento=evento):
                     self.cursor.reset_mock()
                     self.assertEqual(self.persistir(
@@ -126,7 +125,7 @@ class EfeitosPorEtapaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.persistir(1, evento_transicao="nome_valido_falta_cpf", id_etapa_resultante=2)
         with self.assertRaises(ValueError):
-            self.persistir(1, evento_transicao="midia_recebida", id_etapa_resultante=7,
+            self.persistir(1, evento_transicao="humano_solicitado", id_etapa_resultante=7,
                            encaminhado_moveis="557582467000")
         self.cursor.execute.assert_not_called()
 

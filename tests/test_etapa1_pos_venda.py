@@ -30,7 +30,7 @@ def contexto(etapa=1, texto="123", tipo="text", turnos=0, apresentacao=False):
         "id_etapa_origem_transicao": etapa, "turnos_sem_avanco": turnos,
         "resposta_bot_para_mensagem_atual": None,
         "transicoes_permitidas": {
-            "nome_valido_falta_cpf": 2, "midia_recebida": 7,
+            "nome_valido_falta_cpf": 2,
             "humano_solicitado": 7, "limite_sem_avanco": 7,
         },
         "central": {"telefone_sofas": "557592087803", "telefone_moveis": "557582467000",
@@ -106,18 +106,26 @@ class Etapa1Tests(unittest.TestCase):
         self.assertEqual(envio["id_etapa_resultante"], 2)
         self.assertEqual(envio["evento_transicao"], "nome_valido_falta_cpf")
 
-    def test_todos_tipos_nao_textuais_encaminham_apos_saudacao(self):
-        for tipo in ("audio", "image", "video", "document", "sticker", "location", "contacts", "interactive", "unknown"):
-            with self.subTest(tipo=tipo):
-                envio = flow_sender(contexto(tipo=tipo, texto=None))
-                self.assertEqual(envio["evento_transicao"], "midia_recebida")
-                self.assertEqual(envio["mensagem_bot"], MENSAGEM_PRODUTO_NAO_INFORMADO)
+    def test_midia_repete_cada_pergunta_preservando_os_controles(self):
+        for etapa in range(1, 7):
+            for tipo in ("audio", "image", "video", "document", "sticker", "location", "contacts", "unknown"):
+                with self.subTest(etapa=etapa, tipo=tipo):
+                    envio = flow_sender(contexto(etapa=etapa, tipo=tipo, texto="Quero um humano"))
+                    self.assertEqual(envio["id_etapa_resultante"], etapa)
+                    self.assertEqual(envio["tipo_tratamento"], "midia_na_etapa")
+                    self.assertIn("mensagens de texto", envio["mensagem_bot"])
+                    self.assertNotIn("evento_transicao", envio)
+                    if etapa in (3, 4, 5):
+                        interativo = envio["interativo"]
+                        self.assertEqual(interativo["body"]["text"], envio["mensagem_bot"])
+                        self.assertEqual(interativo["type"], {3:"button", 4:"list", 5:"button"}[etapa])
+        self.wa.send_carousel.assert_not_called()
 
     def test_midia_apos_escolher_ambos_usa_mensagem_dos_dois_produtos(self):
-        c = contexto(etapa=4, tipo="audio", texto=None)
+        c = contexto(etapa=4, tipo="audio", texto=None, turnos=3)
         c["produto"] = "ambos"
         envio = flow_sender(c)
-        self.assertEqual(envio["evento_transicao"], "midia_recebida")
+        self.assertEqual(envio["evento_transicao"], "limite_sem_avanco")
         self.assertEqual(envio["mensagem_bot"], MENSAGEM_AMBOS_PRODUTOS)
 
     def test_humano_em_qualquer_frase_sem_diferenciar_caixa(self):
@@ -150,8 +158,8 @@ class Etapa1Tests(unittest.TestCase):
         for base in ("", "http://example.test/img", "https://example.test/img?token=x"):
             with patch.dict(os.environ, {"WHATSAPP_MIDIAS_BASE_URL": base}):
                 with self.assertRaises(ValueError):
-                    flow_sender(contexto(tipo="audio"))
-        c = contexto(tipo="audio")
+                    flow_sender(contexto(tipo="audio", turnos=3))
+        c = contexto(tipo="audio", turnos=3)
         c["central"]["telefone_sofas"] = None
         with self.assertRaises(ValueError):
             flow_sender(c)
@@ -160,7 +168,7 @@ class Etapa1Tests(unittest.TestCase):
     def test_falha_meta_e_propagada_para_recuperacao_worker(self):
         self.wa.send_carousel.side_effect = RuntimeError("falha simulada")
         with self.assertRaises(ErroEnvioMeta):
-            flow_sender(contexto(tipo="audio"))
+            flow_sender(contexto(tipo="audio", turnos=3))
         self.wa.send_message.assert_not_called()
 
     def test_resposta_sem_wamid_nao_e_considerada_enviada(self):
@@ -182,8 +190,8 @@ class Etapa1Tests(unittest.TestCase):
         self.wa.send_carousel.assert_not_called()
 
     def test_mapa_invalido_impede_envio(self):
-        c = contexto(tipo="audio")
-        c["transicoes_permitidas"]["midia_recebida"] = 8
+        c = contexto(tipo="audio", turnos=3)
+        c["transicoes_permitidas"]["limite_sem_avanco"] = 8
         with self.assertRaises(ValueError):
             flow_sender(c)
         self.wa.send_carousel.assert_not_called()

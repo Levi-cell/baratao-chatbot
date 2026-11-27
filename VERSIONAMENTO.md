@@ -12,6 +12,10 @@ Commit: `3355f8cffd76b3da58f38e205dcd01b86c234d0b`
 
 ### Beta V0.0.1 — Reformata saudação e pedido de detalhes do atendimento
 
+Commit: `68528d883bc72dacbc61d950df0790c573f622c9`
+
+### Beta V0.2.0 — Repete perguntas por mídia e preserva o atendimento
+
 Commit: PENDENTE
 
 ## Padrão de numeração

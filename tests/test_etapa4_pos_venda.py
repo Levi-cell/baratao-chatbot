@@ -80,8 +80,8 @@ class AssuntoTests(unittest.TestCase):
     def test_universal_antecipa_assunto_e_respeita_produto_ja_escolhido(self):
         for produto, entrada, tipo, turnos, evento, setores in (
             ("moveis", "Quero um humano para a entrega", "text", 0, "humano_solicitado", {"moveis"}),
-            ("estofados", None, "image", 0, "midia_recebida", {"sofas"}),
-            ("ambos", "Outros", "interactive", 3, "limite_sem_avanco", {"moveis", "sofas"}),
+            ("estofados", None, "image", 3, "limite_sem_avanco", {"sofas"}),
+            ("ambos", "x", "interactive", 3, "limite_sem_avanco", {"moveis", "sofas"}),
         ):
             ctx = contexto_assunto(entrada, tipo=tipo, turnos=turnos, produto=produto)
             envio = flow_sender(ctx)

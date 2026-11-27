@@ -3,7 +3,7 @@
 Camada de Redis, cache local, fallback e reparo detectável.
 
 - [Portal do projeto](../../README.md)
-- [Regras de negócio](../../REGRAS_DE_NEGOCIO.md#18-cache-fallback-e-autocura)
+- [Regras de negócio](../../REGRAS_DE_NEGOCIO.md#cache-fallback-e-autocura)
 - [Padrões de arquitetura](../../PADROES_DE_ARQUITETURA.md#cache)
 
 ## Arquivos

@@ -4,7 +4,7 @@ SQL de runtime da aplicacao. Os modulos sao agrupados por dominio e entidade,
 nao pelo consumidor nem pelo tipo de comando SQL.
 
 - [Portal do projeto](../../README.md)
-- [Padroes de arquitetura](../../PADROES_DE_ARQUITETURA.md#sql-e-repositórios)
+- [Padroes de arquitetura](../../PADROES_DE_ARQUITETURA.md#responsabilidades-por-camada)
 - [Banco e deploy](../database/README.md)
 
 ## Pós-venda Baratão — responsabilidades atuais

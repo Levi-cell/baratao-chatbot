@@ -4,7 +4,7 @@ Sistema de atendimento automatizado de pós-venda pelo WhatsApp, desenvolvido pa
 
 O projeto utiliza um fluxo determinístico, com etapas e transições controladas pelo banco de dados, processamento assíncrono de mensagens e persistência do histórico de atendimento. Também possui uma interface web de monitoramento e um componente independente de acompanhamento do consumo da API da Meta.
 
-**Estado do projeto — 25/11/2026:** em desenvolvimento. As etapas iniciais do pós-venda e o módulo de consumo Meta estão implementados, mas a adaptação integral do atendimento ainda não foi concluída. Esta versão não está liberada para operação completa em produção.
+**Beta V0.2.0.** O atendimento de sete etapas, o webhook e a coleta de consumo Meta rodam na VM Ubuntu. O portal de monitoramento compartilha o serviço web; parte das métricas herdadas ainda requer adaptação ao varejo.
 
 ## Objetivos
 
@@ -17,7 +17,7 @@ O projeto utiliza um fluxo determinístico, com etapas e transições controlada
 
 ## Fluxo de atendimento
 
-O catálogo vigente possui **7 etapas e 27 transições**. Os identificadores são definidos em `core/etapas_pos_venda.py` e as transições autorizadas pelo catálogo SQL do PostgreSQL.
+O catálogo vigente possui **7 etapas e 21 transições**. Os identificadores são definidos em `core/etapas_pos_venda.py` e as transições autorizadas pelo catálogo SQL do PostgreSQL.
 
 | Etapa | Responsabilidade | Estado atual |
 | --- | --- | --- |
@@ -55,7 +55,7 @@ Com as notas confirmadas ou perdidas, todos seguem para o relato (6) e o encamin
 
 ### Encaminhamento humano e tratamento universal
 
-As etapas 1 a 6 compartilham o tratamento de mídias não suportadas, solicitações de atendimento humano e entradas repetidas sem avanço. Após três repetições consecutivas, uma quarta entrada aciona o encaminhamento.
+Após a apresentação, uma mídia repete a pergunta com o aviso de texto. A quarta resposta consecutiva inválida ou um pedido textual de humano encaminha. Uma resposta válida avança e zera o contador, inclusive após três correções.
 
 O encaminhamento apresenta os contatos de pós-venda conforme o produto escolhido. Com ambos ou sem produto definido, uma única mensagem apresenta os dois cartões com foto e botão. Os dados disponíveis da conversa podem compor o resumo encaminhado no link do WhatsApp.
 
@@ -67,24 +67,7 @@ O atendimento humano ocorre nos números de destino; a apresentação dos contat
 
 A aplicação mantém a separação entre recepção HTTP, processamento do fluxo, validação, envio de mensagens, persistência e monitoramento.
 
-```mermaid
-flowchart TD
-    A[Cliente no WhatsApp] --> B[Meta WhatsApp Cloud API]
-    B --> C[Webhook Django]
-    C --> D[Fila PostgreSQL]
-    D --> E[Worker de fluxo]
-    E --> F[Validação e mapa de transições]
-    F --> G[Mensagens e senders PyWa]
-    G --> B
-    E --> H[(Histórico e estado da conversa)]
-    E <--> I[(Redis)]
-    J[Worker de consumo Meta] --> K[Meta Pricing Analytics]
-    J --> L[(Consumo mensal PostgreSQL)]
-    H -. Monitoramento em adaptação .-> M[Painel Django]
-    L --> M
-```
-
-O diagrama representa a arquitetura-alvo do atendimento e os componentes existentes; o webhook completo e parte do painel ainda estão em adaptação.
+[Fluxograma da arquitetura e recuperação](docs/fluxograma_arquitetura.md) · [Fluxograma do atendimento e respostas](docs/fluxograma_atendimento.md)
 
 O worker de fluxo utiliza locks, controle de ordem, checkpoints e transações para preservar a consistência das conversas e recuperar processamentos interrompidos. Respostas já confirmadas podem ser recuperadas sem novo envio. A confirmação externa pela Meta e o commit local não são atômicos entre si: uma falha entre ambos ainda pode causar duplicação na recuperação.
 
@@ -93,7 +76,7 @@ O worker de fluxo utiliza locks, controle de ordem, checkpoints e transações p
 | Tecnologia | Utilização |
 | --- | --- |
 | Python 3.12 | Linguagem principal |
-| Django 6.0.2 | Webhook, autenticação e interface de monitoramento |
+| Django 6.0.10 | Webhook, autenticação e interface de monitoramento |
 | PostgreSQL / Psycopg 3 | Fila, catálogo, cadastros, histórico e consumo |
 | Redis | Cache e mecanismos de proteção operacional |
 | WhatsApp Cloud API / PyWa 4.5.0 | Integração e envio de mensagens interativas |
@@ -177,7 +160,7 @@ O setup de uma base nova e a atualização de uma base existente seguem procedim
 
 ## Testes automatizados
 
-Na VM Ubuntu, execute `sudo -u chatbot bash deploy/testar_ubuntu.sh` na raiz da versão em teste. O script cria dois bancos PostgreSQL temporários e executa a suíte com o envio à Meta simulado. Consulte [o ambiente de desenvolvimento](AMBIENTE_DESENVOLVIMENTO.md).
+Na VM Ubuntu, execute `sudo -u chatbot bash deploy/testar_ubuntu.sh` na raiz da versão em teste. O script cria três bancos PostgreSQL temporários e executa a suíte com o envio à Meta simulado. Consulte [o ambiente de desenvolvimento](AMBIENTE_DESENVOLVIMENTO.md).
 
 ## Implantação
 
@@ -185,20 +168,13 @@ Os componentes mantidos para a arquitetura do Baratão são o serviço web (webh
 
 A atualização do banco existente exige backup, aplicação dos complementos adequados ao estado da base e validação antes da inicialização dos serviços. Consulte o [guia do banco](core/database/README.md) e os [procedimentos de deploy](regras_deploy/rotina_deploy.md).
 
-A presença de unidades systemd do sistema anterior não autoriza a inicialização de workers legados. Não iniciar o atendimento completo em produção enquanto as adaptações pendentes não forem concluídas e verificadas.
+A versão publicada está na branch `prod`. O histórico registra o hash completo após a publicação.
 
 ## Segurança e privacidade
 
 O sistema trata dados pessoais, incluindo nome, CPF e telefone. O código e a documentação não devem expor dados reais de clientes, credenciais, tokens da Meta, senhas ou backups do banco de dados.
 
 Manter configurações sensíveis fora do Git, utilizar acessos restritos por central e evitar o registro em logs de URLs de encaminhamento que contenham CPF. Utilizar dados fictícios nos ensaios e respeitar as obrigações aplicáveis da LGPD.
-
-## Próximas entregas
-
-- Concluir a adaptação integral do webhook e das proteções de entrada ao modelo de varejo.
-- Adaptar as abas de conversas e relatórios do painel ao pós-venda.
-- Revisar e remover dependências e documentações legadas que não pertencem ao novo atendimento.
-- Validar o fluxo completo, as migrações e a implantação antes de liberar a operação em produção.
 
 ## Documentação técnica
 
@@ -211,7 +187,7 @@ Manter configurações sensíveis fora do Git, utilizar acessos restritos por ce
 | [Testes](tests/README.md) | Cobertura, execução e resultados registrados |
 | [Rotina de deploy](regras_deploy/rotina_deploy.md) | Procedimentos operacionais |
 | [Padrões de arquitetura](PADROES_DE_ARQUITETURA.md) | Referência dos padrões herdados da base anterior |
-| [Regras de negócio](REGRAS_DE_NEGOCIO.md) | Referência legada, sujeita à revisão para o varejo |
+| [Regras de negócio](REGRAS_DE_NEGOCIO.md) | Turnos, repetição, bloqueio e recuperação do varejo |
 | [Versionamento](VERSIONAMENTO.md) | Histórico da base de código |
 
 O documento de fluxo do Baratão e o catálogo SQL vigente devem orientar as regras do novo atendimento. Documentos e módulos herdados do Supera não devem ser interpretados como funcionalidades ativas do Baratão sem confirmação no código atual.

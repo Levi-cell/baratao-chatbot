@@ -3,7 +3,7 @@ from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa5_pedidos impor
 from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa6_detalhes import enviar_etapa6_detalhes
 from core.validacoes.pedidos_pos_venda import transicao_dos_pedidos
 from workers.worker_flow.response_flow.etapas.validadores_contexto.valida_pedidos_etapa5 import validar_contexto_pedidos
-from workers.worker_flow.response_flow.tratamento_universal_pos_venda import resolver_tratamento_universal
+from workers.worker_flow.response_flow.tratamento_universal_pos_venda import repetir_etapa, resolver_tratamento_universal
 from workers.worker_flow.response_flow.transicoes.resolver_transicao import (
     resolver_destino_transicao, anexar_transicao_ao_contexto_envio,
 )
@@ -19,7 +19,7 @@ def resolve_etapa5_pedidos(contexto):
         return tratamento
     numeros, quantidade_informada = validar_contexto_pedidos(contexto)
     if numeros is None:
-        return enviar_etapa5_pedidos(destinatario, remetente, quantidade_para_correcao=quantidade_informada)
+        return repetir_etapa(contexto, enviar_etapa5_pedidos, destinatario, remetente, quantidade_para_correcao=quantidade_informada)
     evento, esperado = transicao_dos_pedidos(contexto["assunto"], perdeu_nota=not numeros)
     destino = resolver_destino_transicao(contexto, evento, destinos_esperados={esperado})
     envio = enviar_etapa6_detalhes(destinatario, remetente)

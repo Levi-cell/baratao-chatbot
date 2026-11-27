@@ -1,20 +1,21 @@
-from core.validacoes.encaminhamento_pos_venda import LIMITE_TURNOS_SEM_AVANCO
+from core.validacoes.encaminhamento_pos_venda import LIMITE_TURNOS_SEM_AVANCO, pediu_humano
 
 def acao_contato(*, solicitacao_enviada, telefone_provado, tipo, texto, erros_cliente):
     if not solicitacao_enviada:
         return "solicitar"
     if telefone_provado:
         return "confirmar_e_retomar"
-    if tipo not in {"text", "interactive", "button"}:
-        return "midia_recebida"
-    if tipo == "text" and "humano" in (texto or "").casefold():
+    if pediu_humano(tipo, texto):
         return "humano_solicitado"
     if erros_cliente >= LIMITE_TURNOS_SEM_AVANCO:
         return "limite_sem_avanco"
+    if tipo not in {"text", "interactive", "button"}:
+        return "repetir_por_midia"
     return "repetir_botao"
 
 
 from core.etapas_pos_venda import ETAPA_CPF, ETAPA_PRODUTO, ETAPA_ASSUNTO, ETAPA_PEDIDOS, ETAPA_DETALHES, ETAPA_NOME, ETAPA_ENCAMINHAMENTO
+from core.integrations.whatsapp.messages.tratamentos.midia import avisar_sobre_midia
 from core.integrations.whatsapp.messages.compartilhamento_contato import mensagem_contato, primeiro_nome
 from core.integrations.whatsapp.messages.etapa2_messages import montar_mensagem_etapa2
 from core.integrations.whatsapp.pywa_functions.pywa_senders.compartilhamento_contato import enviar_solicitacao
@@ -29,11 +30,13 @@ from workers.worker_flow.response_flow.transicoes.resolver_transicao import reso
 from core.validacoes.compartilhamento_contato import telefone_compartilhado
 
 
-def pedir(contexto, etapa, nome, *, repetir=False, reconfirmar=False):
+def pedir(contexto, etapa, nome, *, repetir=False, reconfirmar=False, midia=False):
     uid = contexto["bsuid_vigente"]
     phone = contexto["central"]["phone_number_id"]
     texto = mensagem_contato(nome, repeticao=repetir, reconfirmacao=reconfirmar,
                              abertura=contexto.get("apresentacao_pendente", False))
+    if midia:
+        texto = avisar_sobre_midia(texto)
     envio = enviar_solicitacao(uid, phone, texto, etapa)
     return dict(envio, operacao_contato="repetir" if repetir else "abrir",
                 motivo_contato="reconfirmacao" if reconfirmar else "cadastro",
@@ -66,8 +69,8 @@ def resolver_turno_contato(ctx):
                 envio = senders[etapa](prova, phone)
         return dict(envio, operacao_contato="confirmar", bsuid_contato=uid, telefone_provado=prova,
                     tipo_destinatario="wa_id", valor_destinatario=prova)
-    if acao == "repetir_botao":
-        return pedir(ctx, etapa, nome, repetir=True)
+    if acao in {"repetir_botao", "repetir_por_midia"}:
+        return pedir(ctx, etapa, nome, repetir=True, midia=acao == "repetir_por_midia")
     destino = resolver_destino_transicao(ctx, acao, destinos_esperados={ETAPA_ENCAMINHAMENTO})
     envio = enviar_encaminhamento(ctx, acao)
     envio["operacao_contato"] = "encerrar"

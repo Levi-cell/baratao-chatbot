@@ -3,7 +3,7 @@ from core.etapas_pos_venda import ETAPA_ASSUNTO
 from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa3 import enviar_etapa3
 from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa4 import enviar_etapa4
 from workers.worker_flow.response_flow.etapas.validadores_contexto.valida_etapa3 import validar_contexto_etapa3
-from workers.worker_flow.response_flow.tratamento_universal_pos_venda import resolver_tratamento_universal
+from workers.worker_flow.response_flow.tratamento_universal_pos_venda import repetir_etapa, resolver_tratamento_universal
 from workers.worker_flow.response_flow.transicoes.resolver_transicao import (
     resolver_destino_transicao, anexar_transicao_ao_contexto_envio,
 )
@@ -22,7 +22,7 @@ def resolve_etapa3(contexto_historico):
         return tratamento
     validacao = validar_contexto_etapa3(contexto_historico)
     if validacao is None:
-        return enviar_etapa3(destinatario, remetente, invalido=True)
+        return repetir_etapa(contexto_historico, enviar_etapa3, destinatario, remetente, invalido=True)
     evento = validacao["evento"]
     destino = resolver_destino_transicao(contexto_historico, evento, destinos_esperados={ETAPA_ASSUNTO})
     envio = enviar_etapa4(destinatario, remetente)

@@ -70,10 +70,7 @@ ficar artificialmente pertencendo à etapa 1.
 O validador contextual usa o contexto já carregado. Extratores puros podem
 ficar em `core/validacoes/`, sem banco, Redis, HTTP ou importação do worker.
 
-Nas etapas 1 a 5, após a apresentação, o resolver verifica primeiro mídia,
-pedido contendo “humano” e limite de turnos; depois valida nome ou CPF.
-Três repetições confirmadas levam ao encaminhamento na quarta entrada.
-Um avanço válido anterior a esse limite zera o contador.
+Nas etapas 1 a 6, apresentar a primeira pergunta antes de avaliar a entrada. Em seguida, um pedido textual de humano encaminha imediatamente. Para uma mídia ou entrada inválida, consultar o contador antes de repetir. Em três repetições confirmadas, a próxima entrada inválida encaminha. A resposta válida pode avançar e zerar o contador em qualquer tentativa.
 
 Resposta específica inválida repete a etapa, com `tratamento=True`, sem
 evento de transição. O encaminhamento universal, apesar do nome
@@ -84,7 +81,7 @@ Antes do HTTP, o resolver consulta o mapa carregado, verifica o destino
 esperado e só então chama o sender. Depois anexa origem, evento, destino e
 dados validados ao resultado técnico do envio.
 
-Na etapa 3, os tipos interativos de botão seguem o validador específico, que só aceita as três opções. Resposta interativa desconhecida repete a pergunta; mídia segue o universal. Nas próximas etapas, fazer a distinção correspondente para suas listas/botões.
+Botões e listas da etapa seguem o respectivo validador. Uma mídia reapresenta as mesmas opções; na pendência de telefone, reapresenta o botão de compartilhamento.
 
 ## 4. Implementar efeitos explicitamente por etapa
 
@@ -154,6 +151,4 @@ tratadores de erros externos, os locks ou o contrato da fila.
 
 ## Estado atual
 
-As etapas 1 a 6 coletam nome, CPF, produto, assunto, pedidos e relato. O encaminhamento normal ou universal termina na etapa 7. O aviso sobre avarias faz parte da mensagem de contato para assistência.
-
-O worker de consumo Meta consulta o consumo da central e alimenta a aba Consumo do painel.
+O catálogo tem sete etapas e 21 transições. As correções conservam a etapa sem criar aresta no mapa. [Fluxo completo](docs/fluxograma_atendimento.md) · [Catálogo SQL](core/database/deploy_database/catalogo.sql)

@@ -364,14 +364,28 @@ class WorkerPostgresTests(unittest.TestCase):
             reconfirmar.assert_called_once()
             self.assertEqual(self.adm.execute("SELECT count(*) FROM chatbot.fila_mensagens").fetchone()[0],1)
 
+    def test_quatro_midias_com_contato_pendente_encaminham_no_quarto_turno(self):
+        for texto in ("Oi", "Ana da Silva"):
+            self.entrada_privada(texto)
+            self.ciclo()
+        for n in range(1, 4):
+            self.entrada_privada(tipo="audio")
+            self.ciclo()
+            self.assertEqual(self.adm.execute("SELECT erros_cliente FROM chatbot.solicitacao_contato").fetchone(), (n,))
+            self.assertIn("mensagens de texto", self.wa.request_contact_info.call_args.kwargs["text"])
+        self.entrada_privada(tipo="image")
+        self.ciclo()
+        self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_sem_avanco"))
+        self.wa.send_carousel.assert_called_once()
+
     def test_so_bsuid_nome_compartilhamento_cpf(self):
         for texto in ("Oi","Ana Maria da Silva"):
             self.assertEqual(self.entrada_privada(texto)["status"],"inserted")
             self.ciclo()
         self.wa.request_contact_info.assert_called_once()
         self.assertIn("Ana,",self.wa.request_contact_info.call_args.kwargs["text"])
-        for _ in range(3):
-            self.entrada_privada("ainda nao")
+        for tipo in ("audio", "image", "text"):
+            self.entrada_privada("ainda nao" if tipo == "text" else None, tipo=tipo)
             self.ciclo()
         self.assertEqual(self.adm.execute("SELECT erros_cliente FROM chatbot.solicitacao_contato").fetchone()[0],3)
         self.assertEqual(self.entrada_privada(cartao=True)["status"],"inserted")
@@ -523,7 +537,7 @@ class WorkerPostgresTests(unittest.TestCase):
     def test_falha_meta_nao_conta_turno_nem_fecha(self):
         self.preparar()
         self.wa.send_carousel.side_effect = RuntimeError("falha de transporte simulada")
-        item = self.fila(None, "audio")
+        item = self.fila("humano")
         self.ciclo()
         self.assertEqual(self.conversa()[:3], (1, 0, True))
         self.assertEqual(self.adm.execute("""
@@ -533,12 +547,12 @@ class WorkerPostgresTests(unittest.TestCase):
 
     def test_queda_apos_commit_da_resposta_recupera_fechamento_sem_reenviar(self):
         self.preparar()
-        item = self.fila(None, "image")
+        item = self.fila("humano")
         self.ciclo(finalizar_mensagem_processada=RuntimeError("queda antes da finalização"))
         self.assertEqual(self.conversa()[:3], (7, 0, True))
         self.adm.execute("UPDATE chatbot.fila_mensagens SET next_attempt_at=now() WHERE id_mensagem=%s", (item,))
         self.ciclo()
-        self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_midia"))
+        self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_humano"))
         self.wa.send_carousel.assert_called_once()
 
     def test_retry_de_repeticao_nao_incrementa_duas_vezes(self):
@@ -641,17 +655,17 @@ class WorkerPostgresTests(unittest.TestCase):
         self.assertEqual(self.cache.call_args.args[1]["bloqueio_dias"], 90)
         self.assertEqual(self.adm.execute("SELECT count(*) FROM chatbot.cliente_bloqueado_meta").fetchone()[0], 0)
 
-    def test_etapa2_pedido_humano_e_midia_usam_encerramento_universal(self):
-        for tipo, texto, motivo in (("text", "Quero atendimento humano", "encaminhamento_humano"),
-                                    ("document", None, "encaminhamento_midia")):
-            with self.subTest(tipo=tipo):
-                self.setUp()
-                self.preparar_cpf()
-                self.fila(texto, tipo)
-                self.ciclo()
-                self.assertEqual(self.conversa()[:4], (7, 0, False, motivo))
-                self.assertEqual(self.cache.call_args.args[1]["bloqueio_dias"], 90)
-                self.wa.send_carousel.assert_called_once()
+    def test_cpf_mistura_midia_e_texto_quarto_erro_encaminha(self):
+        self.preparar_cpf()
+        for n, (texto, tipo) in enumerate([(None,"document"),("123","text"),(None,"image")], 1):
+            self.fila(texto, tipo)
+            self.ciclo()
+            self.assertEqual(self.conversa()[:3], (2, n, True))
+        self.fila(None, "video")
+        self.ciclo()
+        self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_sem_avanco"))
+        self.assertEqual(self.cache.call_args.args[1]["bloqueio_dias"], 90)
+        self.wa.send_carousel.assert_called_once()
 
     def test_etapa2_retry_de_cpf_invalido_nao_conta_duas_vezes(self):
         self.preparar_cpf()
@@ -1044,6 +1058,10 @@ class WorkerPostgresTests(unittest.TestCase):
         for _ in range(2):
             self.adm.execute(recoleta)
             self.assertEqual(self.adm.execute("SELECT count(*) FROM chatbot.etapa_transicao").fetchone(), (27,))
+        midia = (ROOT / "deploy/migrations/20261127_midia_repete_etapa.sql").read_text(encoding="utf-8")
+        for _ in range(2):
+            self.adm.execute(midia)
+            self.assertEqual(self.adm.execute("SELECT count(*) FROM chatbot.etapa_transicao").fetchone(), (21,))
         self.assertIsNone(buscar_bloqueio_ativo_por_cliente_unidade("5511999990000", "999", self.adm.cursor()))
         self.fila("Sim")
         self.ciclo()
@@ -1104,7 +1122,7 @@ class WorkerPostgresTests(unittest.TestCase):
             self.fila("?", "text")
             self.ciclo()
             self.assertEqual(self.conversa()[:3], (4, turno, True))
-        self.fila("Outros", "interactive")
+        self.fila(None, "document")
         self.ciclo()
         self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_sem_avanco"))
         self.assertEqual(self.adm.execute("""
@@ -1118,20 +1136,24 @@ class WorkerPostgresTests(unittest.TestCase):
             self.fila("???")
             self.ciclo()
             self.assertEqual(self.conversa()[:3], (3, n, True))
-        self.fila("Estofados e Móveis", "interactive")
+        self.fila("id de botão desconhecido", "interactive")
         self.ciclo()
         self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_sem_avanco"))
         self.assertIsNone(self.adm.execute("SELECT produto FROM chatbot.atendimento_pos_venda").fetchone()[0])
         self.assertEqual(self.cache.call_args.args[1]["bloqueio_dias"], 90)
 
-    def test_produto_midia_usa_universal_e_dois_contatos(self):
+    def test_produto_valido_apos_tres_midias_zera_contador(self):
         self.preparar_produto()
-        self.fila(None, "video")
+        for n in range(1, 4):
+            self.fila(None, "video")
+            self.ciclo()
+            self.assertEqual(self.conversa()[:3], (3, n, True))
+        self.fila("móveis")
         self.ciclo()
-        self.assertEqual(self.conversa()[:4], (7, 0, False, "encaminhamento_midia"))
+        self.assertEqual(self.conversa()[:3], (4, 0, True))
         self.assertEqual(self.adm.execute("""
             SELECT produto,encaminhado_sofas,encaminhado_moveis FROM chatbot.atendimento_pos_venda
-        """).fetchone(), (None, "557592087803", "557582467000"))
+        """).fetchone(), ("moveis", None, None))
 
     def test_produto_queda_antes_commit_reverte_dado_etapa_e_resposta(self):
         self.preparar_produto()

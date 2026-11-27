@@ -4,7 +4,7 @@ from core.etapas_pos_venda import ETAPA_CPF
 from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa1 import enviar_etapa1, enviar_nome_invalido
 from core.integrations.whatsapp.pywa_functions.pywa_senders.etapa2 import enviar_etapa2
 from workers.worker_flow.response_flow.etapas.validadores_contexto.valida_etapa1 import validar_contexto_etapa1
-from workers.worker_flow.response_flow.tratamento_universal_pos_venda import resolver_tratamento_universal
+from workers.worker_flow.response_flow.tratamento_universal_pos_venda import repetir_etapa, resolver_tratamento_universal
 from workers.worker_flow.response_flow.transicoes.resolver_transicao import (
     resolver_destino_transicao, anexar_transicao_ao_contexto_envio,
 )
@@ -27,7 +27,7 @@ def resolve_etapa1(contexto_historico):
         return tratamento
     validacao = validar_contexto_etapa1(contexto_historico)
     if validacao is None:
-        return enviar_nome_invalido(destinatario, remetente)
+        return repetir_etapa(contexto_historico, enviar_nome_invalido, destinatario, remetente)
 
     evento = validacao["evento"]
     destino = resolver_destino_transicao(contexto_historico, evento, destinos_esperados={ETAPA_CPF})

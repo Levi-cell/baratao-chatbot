@@ -71,7 +71,7 @@ class AberturaDigitacaoTests(unittest.TestCase):
             self.processar(ctx)
         with patch.dict(os.environ, {"WHATSAPP_MIDIAS_BASE_URL": ""}):
             with self.assertRaises(ValueError):
-                self.processar(contexto(tipo="audio"))
+                self.processar(contexto(tipo="audio", turnos=3))
         self.assertEqual(self.ordem, [])
 
     def test_falha_opcional_de_digitacao_nao_impede_a_resposta(self):

@@ -19,7 +19,7 @@ def contexto_cpf(texto="12345678901", *, tipo="text", turnos=0, cidade=None):
     ctx = contexto(etapa=2, texto=texto, tipo=tipo, turnos=turnos)
     ctx["transicoes_permitidas"] = {
         "cpf_valido": 3,
-        "midia_recebida": 7, "humano_solicitado": 7, "limite_sem_avanco": 7,
+        "humano_solicitado": 7, "limite_sem_avanco": 7,
     }
     ctx["cadastro"] = {"nome_titular": "João da Silva", "cidade_loja_compra": cidade}
     return ctx
@@ -119,13 +119,10 @@ class Etapa2Tests(unittest.TestCase):
         self.assertEqual(envio["evento_transicao"], "limite_sem_avanco")
         self.wa.send_carousel.assert_called_once()
 
-    def test_midia_ou_pedido_humano_usam_o_universal_antes_do_cpf(self):
-        for tipo, texto, evento in (("audio", None, "midia_recebida"),
-                                    ("text", "Quero um HUMANO, CPF 01234567890", "humano_solicitado")):
-            envio = flow_sender(contexto_cpf(texto, tipo=tipo))
-            self.assertEqual(envio["id_etapa_resultante"], 7)
-            self.assertEqual(envio["evento_transicao"], evento)
-            self.assertNotIn("cpf_titular", envio)
+    def test_pedido_humano_antecipa_validacao_do_cpf(self):
+        envio = flow_sender(contexto_cpf("Quero um HUMANO, CPF 01234567890"))
+        self.assertEqual(envio["evento_transicao"], "humano_solicitado")
+        self.assertNotIn("cpf_titular", envio)
         self.wa.send_message.assert_not_called()
 
     def test_transicao_ausente_impede_envio(self):

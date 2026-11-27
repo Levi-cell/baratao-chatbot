@@ -62,11 +62,6 @@ A seção Consumo e os PDFs leem apenas o PostgreSQL. Navegar entre meses não c
 
 O carregamento dos serviços das abas antigas foi isolado nas respectivas rotas para que o FireAds removido não impeça login/Consumo. Isso não adapta os relatórios ou conversas do Supera ao varejo.
 
-## Verificação local
+## Verificação na VM Ubuntu
 
-```powershell
-python -m unittest tests.test_consumo_meta_varejo -v
-python -m unittest tests.test_consumo_meta_varejo_postgres -v
-```
-
-A segunda suíte exige `BARATAO_CONSUMO_TEST_DSN` para um PostgreSQL local descartável com banco `baratao_*`; ela recria o schema chatbot apenas nesse banco. A Meta é simulada. Confira a [documentação de testes](../tests/README.md).
+A suíte usa transporte Meta simulado e um banco descartável com prefixo `baratao_`. O script de testes configura `BARATAO_CONSUMO_TEST_DSN` para esse banco. [Documentação de testes](../tests/README.md)

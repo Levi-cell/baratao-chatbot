@@ -36,12 +36,12 @@ class RemetenteCentralTests(unittest.TestCase):
         self.enterContext(patch("core.integrations.whatsapp.pywa_functions.cliente.WhatsAppCentral",
                                 side_effect=criar_cliente))
         self.enterContext(patch.dict(os.environ, ENV))
-        encaminhar_moveis = contexto(tipo="audio")
+        encaminhar_moveis = contexto(tipo="audio", turnos=3)
         encaminhar_moveis["produto"] = "moveis"
         for ctx, tipo in (
             (contexto(apresentacao=True), "text"), (contexto_produto("talvez"), "button"),
             (contexto_produto("móveis"), "list"), (encaminhar_moveis, "cta_url"),
-            (contexto(tipo="audio"), "carousel"),
+            (contexto(tipo="audio", turnos=3), "carousel"),
         ):
             for waac in (None, "771"):
                 with self.subTest(tipo=tipo, waac=waac):
